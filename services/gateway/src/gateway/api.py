@@ -90,18 +90,20 @@ async def list_servers(request: Request, _: Principal = Depends(current_principa
 
 
 @router.post("/api/servers", response_model=ServerOut, status_code=201)
-async def create_server(data: ServerIn, request: Request, _: Principal = Depends(require_admin)):
+async def create_server(data: ServerIn, request: Request, admin: Principal = Depends(require_admin)):
     svc = services(request)
     try:
         state = await svc.registry.create(data)
     except RegistryError as exc:
+        log.info("%s: server registration rejected: %s", admin.email, exc)
         raise HTTPException(422, str(exc)) from exc
+    log.info("%s registered server %s -> %s", admin.email, state.slug, state.url)
     await svc.monitor.refresh(state.slug)
     return server_out(svc, state)
 
 
 @router.patch("/api/servers/{server_id}", response_model=ServerOut)
-async def update_server(server_id: uuid.UUID, patch: ServerPatch, request: Request, _: Principal = Depends(require_admin)):
+async def update_server(server_id: uuid.UUID, patch: ServerPatch, request: Request, admin: Principal = Depends(require_admin)):
     svc = services(request)
     find(svc, server_id)
     before = svc.catalog.visibility_signature()
@@ -109,17 +111,20 @@ async def update_server(server_id: uuid.UUID, patch: ServerPatch, request: Reque
         state = await svc.registry.update(server_id, patch)
     except RegistryError as exc:
         raise HTTPException(422, str(exc)) from exc
+    # Field names only: the credential value must never reach the logs.
+    log.info("%s updated server %s (%s)", admin.email, state.slug, ", ".join(sorted(patch.model_dump(exclude_unset=True))))
     await svc.monitor.refresh(state.slug)
     await svc.monitor.notify_if_changed(before)
     return server_out(svc, state)
 
 
 @router.delete("/api/servers/{server_id}", status_code=204)
-async def delete_server(server_id: uuid.UUID, request: Request, _: Principal = Depends(require_admin)):
+async def delete_server(server_id: uuid.UUID, request: Request, admin: Principal = Depends(require_admin)):
     svc = services(request)
     find(svc, server_id)
     before = svc.catalog.visibility_signature()
-    await svc.registry.delete(server_id)
+    slug = await svc.registry.delete(server_id)
+    log.info("%s deleted server %s", admin.email, slug)
     await svc.monitor.notify_if_changed(before)
 
 
@@ -131,10 +136,41 @@ async def test_server(server_id: uuid.UUID, request: Request, _: Principal = Dep
     return server_out(svc, state)
 
 
-@router.get("/api/tools")
+class CatalogToolOut(BaseModel):
+    exposed_name: str
+    server_slug: str
+    server_name: str
+    tool: str
+    description: str
+    min_role: str
+    read_only: bool
+    input_schema: dict[str, Any]
+
+
+class MetaOut(BaseModel):
+    mcp_url: str
+
+
+@router.get("/api/tools", response_model=list[CatalogToolOut])
 async def list_tools(request: Request, principal: Principal = Depends(current_principal)):
-    tools = services(request).catalog.visible_tools(principal.role)
-    return [{"name": t.name, "description": t.description} for t in tools]
+    """Exactly what this user's MCP client sees in tools/list (same routable + role filter)."""
+    catalog = services(request).catalog
+    return [
+        CatalogToolOut(
+            exposed_name=exposed_name(s.slug, t.name), server_slug=s.slug, server_name=s.name, tool=t.name,
+            description=t.description or "", min_role=catalog.min_role(s.slug, t),
+            read_only=bool(t.annotations and t.annotations.read_only_hint), input_schema=t.input_schema,
+        )
+        for s in sorted(catalog.servers.values(), key=lambda s: s.slug)
+        if s.is_routable
+        for t in s.tools
+        if catalog.allowed(principal.role, s.slug, t)
+    ]
+
+
+@router.get("/api/meta", response_model=MetaOut)
+async def meta(request: Request, _: Principal = Depends(current_principal)):
+    return MetaOut(mcp_url=services(request).settings.public_mcp_url)
 
 
 class PermissionOut(BaseModel):
@@ -195,6 +231,7 @@ async def set_permission(slug: str, tool: str, data: PermissionIn, request: Requ
     if match is None:
         raise HTTPException(404, f"no tool '{tool}' on server '{slug}'")
     await svc.registry.set_policy(state, tool, data.min_role, admin.user_id)
+    log.info("%s set min role of %s__%s to %s", admin.email, slug, tool, data.min_role or "default")
     # Who can see the tool changed, so connected clients should re-list.
     await svc.hub.notify_tools_changed()
     return PermissionOut(

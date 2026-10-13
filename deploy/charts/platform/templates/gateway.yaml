@@ -90,6 +90,8 @@ spec:
             {{- end }}
             - name: PUBLIC_APP_URL
               value: "{{ ternary "https" "http" .Values.global.tls.enabled }}://{{ $appHost }}"
+            - name: PUBLIC_MCP_URL
+              value: "{{ ternary "https" "http" .Values.global.tls.enabled }}://{{ $mcpHost }}/mcp"
             - name: COOKIE_SECURE
               value: {{ .Values.global.tls.enabled | quote }}
             - name: SEED_SERVERS

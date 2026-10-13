@@ -28,6 +28,7 @@ class Settings(BaseSettings):
     bootstrap_admin_email: str = ""
     bootstrap_admin_password: str = ""
     public_app_url: str = "http://app.127-0-0-1.nip.io"
+    public_mcp_url: str = "http://mcp.127-0-0-1.nip.io/mcp"
     cookie_secure: bool = False
     session_ttl_seconds: int = 12 * 3600
     invite_ttl_hours: int = 72

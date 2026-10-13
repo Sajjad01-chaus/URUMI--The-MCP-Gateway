@@ -18,7 +18,8 @@ spec:
       secretName: platform-tls
   {{- end }}
   rules:
-    # Only the dashboard API and the MCP endpoint are public; /healthz, /readyz stay internal.
+    # Public: dashboard (/), its API (/api) and the MCP endpoint; gateway /healthz, /readyz stay internal.
+    # The longest matching prefix wins, so /api goes to the gateway and everything else to the dashboard.
     - host: {{ $appHost | quote }}
       http:
         paths:
@@ -27,6 +28,12 @@ spec:
             backend:
               service:
                 name: gateway
+                port: { name: http }
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: dashboard
                 port: { name: http }
     - host: {{ $mcpHost | quote }}
       http:

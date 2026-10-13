@@ -52,6 +52,14 @@ gateway:
     requests: { cpu: 100m, memory: 160Mi }
     limits: { cpu: "1", memory: 512Mi }
 
+dashboard:
+  image: urumi/dashboard:dev
+  imagePullPolicy: IfNotPresent
+  replicas: 1
+  resources:
+    requests: { cpu: 10m, memory: 16Mi }
+    limits: { cpu: 200m, memory: 64Mi }
+
 notesMcp:
   image: urumi/notes-mcp:dev
   imagePullPolicy: IfNotPresent

@@ -257,3 +257,12 @@ async def test_two_racing_accepts_create_one_user(gw):
     assert sorted(r.status_code for r in results) != [201, 201]
     async with gw.svc.db.session() as session:
         assert await session.scalar(select(func.count()).select_from(User).where(User.email == "erin@x.io")) == 1
+
+
+async def test_tools_api_matches_mcp_tools_list_per_role_and_meta_gives_mcp_url(gw):
+    for key in (gw.admin_key, gw.member_key):
+        async with mcp(gw, key) as client, httpx2.AsyncClient(base_url=gw.url, headers={"Authorization": f"Bearer {key}"}) as http:
+            rest = (await http.get("/api/tools")).json()
+            assert {t["exposed_name"] for t in rest} == await names(client)
+            assert all(t["server_slug"] and "properties" in t["input_schema"] for t in rest)
+            assert (await http.get("/api/meta")).json() == {"mcp_url": "http://mcp.127-0-0-1.nip.io/mcp"}

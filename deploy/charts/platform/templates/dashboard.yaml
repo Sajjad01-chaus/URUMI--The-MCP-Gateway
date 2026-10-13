@@ -1,0 +1,58 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: dashboard
+  labels: {{- include "platform.labels" . | nindent 4 }}
+    app.kubernetes.io/name: dashboard
+spec:
+  selector: {{- include "platform.selector" (dict "root" . "name" "dashboard") | nindent 4 }}
+  ports:
+    - name: http
+      port: 8080
+      targetPort: http
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: dashboard
+  labels: {{- include "platform.labels" . | nindent 4 }}
+    app.kubernetes.io/name: dashboard
+spec:
+  # Static files only, so it scales freely (unlike the gateway).
+  replicas: {{ .Values.dashboard.replicas }}
+  selector:
+    matchLabels: {{- include "platform.selector" (dict "root" . "name" "dashboard") | nindent 6 }}
+  template:
+    metadata:
+      labels: {{- include "platform.labels" . | nindent 8 }}
+        app.kubernetes.io/name: dashboard
+    spec:
+      automountServiceAccountToken: false
+      # nginx-unprivileged is built for uid/gid 101.
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 101
+        runAsGroup: 101
+        seccompProfile: { type: RuntimeDefault }
+      containers:
+        - name: dashboard
+          image: {{ .Values.dashboard.image }}
+          imagePullPolicy: {{ .Values.dashboard.imagePullPolicy }}
+          ports:
+            - name: http
+              containerPort: 8080
+          readinessProbe:
+            httpGet: { path: /healthz, port: http }
+            periodSeconds: 10
+          livenessProbe:
+            httpGet: { path: /healthz, port: http }
+            periodSeconds: 20
+          securityContext: {{- include "platform.containerSecurity" . | nindent 12 }}
+          resources: {{- toYaml .Values.dashboard.resources | nindent 12 }}
+          volumeMounts:
+            # Read-only root fs: nginx writes its pid and temp files here.
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: tmp
+          emptyDir: {}
