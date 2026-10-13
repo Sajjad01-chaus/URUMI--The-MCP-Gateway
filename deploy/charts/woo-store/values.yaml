@@ -39,6 +39,19 @@ bootstrap:
     requests: { cpu: 100m, memory: 128Mi }
     limits: { cpu: 500m, memory: 384Mi }
 
+wooMcp:
+  image: urumi/woo-mcp:dev
+  imagePullPolicy: IfNotPresent
+  timeoutSeconds: 15
+  resources:
+    requests: { cpu: 50m, memory: 64Mi }
+    limits: { cpu: 500m, memory: 256Mi }
+  # Only these pods may call woo-mcp (enforced by NetworkPolicy, plus the bearer token).
+  allowedClients:
+    namespace: platform
+    podLabels:
+      app.kubernetes.io/name: gateway
+
 networkPolicy:
   enabled: true
   ingressController:
@@ -56,3 +69,4 @@ secrets:
   wpAdminEmail: admin@urumi.local
   wooConsumerKey: ""
   wooConsumerSecret: ""
+  wooMcpToken: ""

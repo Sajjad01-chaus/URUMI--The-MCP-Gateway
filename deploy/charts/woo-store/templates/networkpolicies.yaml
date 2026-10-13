@@ -51,4 +51,24 @@ spec:
               app.kubernetes.io/name: woo-mcp
       ports:
         - port: 80
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: woo-mcp-from-gateway-only
+  labels: {{- include "store.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: woo-mcp
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ .Values.wooMcp.allowedClients.namespace }}
+          podSelector:
+            matchLabels: {{- toYaml .Values.wooMcp.allowedClients.podLabels | nindent 14 }}
+      ports:
+        - port: 8000
 {{- end }}

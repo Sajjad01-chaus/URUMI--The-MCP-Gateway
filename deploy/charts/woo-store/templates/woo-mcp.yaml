@@ -1,0 +1,84 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: woo-mcp
+  labels: {{- include "store.labels" . | nindent 4 }}
+    app.kubernetes.io/name: woo-mcp
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: woo-mcp
+    app.kubernetes.io/instance: {{ .Release.Name }}
+  ports:
+    - name: http
+      port: 8000
+      targetPort: http
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: woo-mcp
+  labels: {{- include "store.labels" . | nindent 4 }}
+    app.kubernetes.io/name: woo-mcp
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: woo-mcp
+      app.kubernetes.io/instance: {{ .Release.Name }}
+  template:
+    metadata:
+      labels: {{- include "store.labels" . | nindent 8 }}
+        app.kubernetes.io/name: woo-mcp
+    spec:
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        seccompProfile: { type: RuntimeDefault }
+      containers:
+        - name: woo-mcp
+          image: {{ .Values.wooMcp.image }}
+          imagePullPolicy: {{ .Values.wooMcp.imagePullPolicy }}
+          env:
+            - name: WOO_BASE_URL
+              value: http://wordpress
+            - name: WOO_STORE_HOST
+              value: {{ include "store.host" . | quote }}
+            - name: WOO_PUBLIC_URL
+              value: {{ include "store.url" . | quote }}
+            - name: WOO_TIMEOUT_SECONDS
+              value: {{ .Values.wooMcp.timeoutSeconds | quote }}
+            - name: WOO_CONSUMER_KEY
+              valueFrom:
+                secretKeyRef: { name: woo-api, key: consumer-key }
+            - name: WOO_CONSUMER_SECRET
+              valueFrom:
+                secretKeyRef: { name: woo-api, key: consumer-secret }
+            - name: MCP_AUTH_TOKEN
+              valueFrom:
+                secretKeyRef: { name: woo-mcp-auth, key: token }
+            # Host headers accepted on /mcp: the in-cluster service names (+ localhost for port-forward debugging).
+            - name: ALLOWED_HOSTS
+              value: "woo-mcp:*,woo-mcp.{{ .Release.Namespace }}:*,woo-mcp.{{ .Release.Namespace }}.svc:*,woo-mcp.{{ .Release.Namespace }}.svc.cluster.local:*,localhost:*,127.0.0.1:*"
+          ports:
+            - name: http
+              containerPort: 8000
+          readinessProbe:
+            httpGet: { path: /healthz, port: http }
+            periodSeconds: 10
+          livenessProbe:
+            httpGet: { path: /healthz, port: http }
+            periodSeconds: 15
+            timeoutSeconds: 5
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: { drop: ["ALL"] }
+          resources: {{- toYaml .Values.wooMcp.resources | nindent 12 }}
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: tmp
+          emptyDir: {}
