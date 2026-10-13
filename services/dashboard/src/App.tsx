@@ -3,6 +3,7 @@ import { NavLink, Navigate, Outlet, Route, Routes } from "react-router-dom";
 import { RequireAuth, useAuth, useCurrentUser } from "./auth";
 import AcceptInvitePage from "./pages/AcceptInvite";
 import AuditPage from "./pages/Audit";
+import ChatPage from "./pages/Chat";
 import ConnectPage from "./pages/Connect";
 import KeysPage from "./pages/Keys";
 import LoginPage from "./pages/Login";
@@ -25,6 +26,7 @@ function Layout() {
           <span>Urumi Gateway</span>
         </div>
         <div className="nav-section">Gateway</div>
+        <NavLink to="/chat" className={link}>Chat</NavLink>
         <NavLink to="/servers" className={link}>Servers</NavLink>
         <NavLink to="/tools" className={link}>Tools</NavLink>
         {isAdmin && <NavLink to="/permissions" className={link}>Tool permissions</NavLink>}
@@ -54,6 +56,7 @@ export default function App() {
       <Route path="/login" element={<LoginPage />} />
       <Route path="/invite/:token" element={<AcceptInvitePage />} />
       <Route element={<RequireAuth><Layout /></RequireAuth>}>
+        <Route path="/chat" element={<ChatPage />} />
         <Route path="/servers" element={<ServersPage />} />
         <Route path="/tools" element={<ToolsPage />} />
         <Route path="/permissions" element={<RequireAuth admin><PermissionsPage /></RequireAuth>} />

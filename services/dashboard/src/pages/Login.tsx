@@ -1,4 +1,4 @@
-import { useState, type FormEvent } from "react";
+import { useRef, useState, type FormEvent } from "react";
 import { Navigate, useLocation, useNavigate } from "react-router-dom";
 
 import { useAuth } from "../auth";
@@ -12,15 +12,23 @@ export default function LoginPage() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const { busy, error, run } = useAction();
+  const passwordRef = useRef<HTMLInputElement>(null);
 
   if (user) return <Navigate to={from} replace />;
 
   const submit = async (e: FormEvent) => {
     e.preventDefault();
-    await run(async () => {
+    const ok = await run(async () => {
       await login(email, password);
-      navigate(from, { replace: true });
+      return true;
     });
+    if (ok) {
+      navigate(from, { replace: true });
+      return;
+    }
+    // Failed attempt: keep the email, clear the password and ask for it again.
+    setPassword("");
+    passwordRef.current?.focus();
   };
 
   return (
@@ -39,7 +47,7 @@ export default function LoginPage() {
         </div>
         <div className="field">
           <label htmlFor="password">Password</label>
-          <input id="password" type="password" autoComplete="current-password" required value={password} onChange={(e) => setPassword(e.target.value)} />
+          <input id="password" ref={passwordRef} type="password" autoComplete="current-password" required value={password} onChange={(e) => setPassword(e.target.value)} />
         </div>
         <button className="button button-primary" disabled={busy}>{busy ? "Signing in…" : "Sign in"}</button>
       </form>

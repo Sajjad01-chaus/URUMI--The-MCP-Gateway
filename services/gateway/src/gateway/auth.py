@@ -16,6 +16,7 @@ from .db import Database
 from .hub import SessionHub
 from .models import ApiKey, User, utcnow
 from .security import API_KEY_PREFIX, hash_token
+from .sessions import read_token
 
 log = logging.getLogger(__name__)
 
@@ -60,6 +61,24 @@ def api_key_resolver(db: Database) -> Resolver:
                 key.last_used_at = now
                 await session.commit()
             return Principal(user.id, user.email, user.role, key.id, "mcp")
+
+    return resolve
+
+
+def chat_token_resolver(db: Database, secret: str) -> Resolver:
+    """Short-lived token minted by /api/chat: the agent calls tools as the logged-in user (source=chat)."""
+
+    async def resolve(token: str) -> Principal | None:
+        if token.startswith(API_KEY_PREFIX):
+            return None
+        user_id = read_token(token, secret, "chat")
+        if user_id is None:
+            return None
+        async with db.session() as session:
+            user = await session.get(User, user_id)
+        if user is None or user.status != "active":
+            return None
+        return Principal(user.id, user.email, user.role, None, "chat")
 
     return resolve
 

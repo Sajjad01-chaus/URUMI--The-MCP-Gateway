@@ -1,7 +1,7 @@
 import json
 from functools import lru_cache
 
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 from pydantic_settings import BaseSettings
 
 
@@ -18,13 +18,18 @@ class SeedServer(BaseModel):
     tool_policies: dict[str, str] = {}
 
 
+DEV_SESSION_SECRET = "dev-only-session-secret-change-me-0000"
+DEV_CHAT_SECRET = "dev-only-chat-token-secret-change-me-00"
+MIN_SECRET_LENGTH = 32
+
+
 class Settings(BaseSettings):
     """Runtime configuration from environment variables; secrets come from K8s Secrets."""
 
     database_url: str
     credential_encryption_key: str
-    session_secret: str = "dev-only-session-secret-change-me"
-    chat_token_secret: str = "dev-only-chat-secret-change-me"
+    session_secret: str = DEV_SESSION_SECRET
+    chat_token_secret: str = DEV_CHAT_SECRET
     bootstrap_admin_email: str = ""
     bootstrap_admin_password: str = ""
     public_app_url: str = "http://app.127-0-0-1.nip.io"
@@ -32,6 +37,16 @@ class Settings(BaseSettings):
     cookie_secure: bool = False
     session_ttl_seconds: int = 12 * 3600
     invite_ttl_hours: int = 72
+
+    llm_base_url: str = "https://api.groq.com/openai/v1"
+    llm_model: str = "openai/gpt-oss-120b"
+    llm_api_key: str = ""
+    llm_timeout_seconds: float = 45.0
+    chat_token_ttl_seconds: int = 300
+    chat_max_iterations: int = 6
+    chat_max_tool_calls: int = 10
+    chat_turn_timeout_seconds: float = 90.0
+    chat_tool_result_chars: int = 4000
 
     seed_servers: str = "[]"
     allowed_internal_hosts: str = ""
@@ -42,6 +57,18 @@ class Settings(BaseSettings):
     unreachable_after_failures: int = 2
     max_concurrent_calls_per_upstream: int = 10
     default_call_timeout_seconds: int = 20
+
+    @field_validator("session_secret", "chat_token_secret")
+    @classmethod
+    def strong_secret(cls, value: str) -> str:
+        # HS256 needs at least a 256-bit key (RFC 7518 §3.2); refuse to start with a weak one.
+        if len(value) < MIN_SECRET_LENGTH:
+            raise ValueError(f"must be at least {MIN_SECRET_LENGTH} characters")
+        return value
+
+    @property
+    def uses_dev_secrets(self) -> bool:
+        return self.session_secret == DEV_SESSION_SECRET or self.chat_token_secret == DEV_CHAT_SECRET
 
     @property
     def seed_server_list(self) -> list[SeedServer]:
@@ -63,3 +90,11 @@ def _split(value: str) -> list[str]:
 @lru_cache
 def get_settings() -> Settings:
     return Settings()
+
+
+PLACEHOLDER_PREFIX = "REPLACE_WITH"
+
+
+def llm_configured(settings: Settings) -> bool:
+    key = settings.llm_api_key.strip()
+    return bool(key) and not key.startswith(PLACEHOLDER_PREFIX)

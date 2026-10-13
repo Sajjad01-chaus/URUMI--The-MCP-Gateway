@@ -45,7 +45,7 @@ wooMcp:
   timeoutSeconds: 15
   resources:
     requests: { cpu: 50m, memory: 64Mi }
-    limits: { cpu: 500m, memory: 256Mi }
+    limits: { cpu: "1", memory: 256Mi }
   # Only these pods may call woo-mcp (enforced by NetworkPolicy, plus the bearer token).
   allowedClients:
     namespace: platform

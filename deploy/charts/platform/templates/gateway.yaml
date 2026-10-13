@@ -94,6 +94,13 @@ spec:
               value: "{{ ternary "https" "http" .Values.global.tls.enabled }}://{{ $mcpHost }}/mcp"
             - name: COOKIE_SECURE
               value: {{ .Values.global.tls.enabled | quote }}
+            - name: LLM_BASE_URL
+              value: {{ .Values.llm.baseUrl | quote }}
+            - name: LLM_MODEL
+              value: {{ .Values.llm.model | quote }}
+            - name: LLM_API_KEY
+              valueFrom:
+                secretKeyRef: { name: llm, key: api-key }
             - name: SEED_SERVERS
               value: {{ $seeds | toJson | quote }}
             - name: ALLOWED_INTERNAL_HOSTS

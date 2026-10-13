@@ -2,7 +2,8 @@ import asyncio
 import contextlib
 import logging
 from collections.abc import AsyncIterator
-from dataclasses import dataclass
+import uuid
+from dataclasses import dataclass, field
 
 from fastapi import FastAPI
 from mcp.server.transport_security import TransportSecuritySettings
@@ -10,8 +11,10 @@ from mcp.server.transport_security import TransportSecuritySettings
 from .api import router
 from .team import router as team_router
 from .audit import Auditor
-from .auth import McpAuthMiddleware, Resolver, api_key_resolver, rejected_call_auditor
+from .auth import McpAuthMiddleware, Resolver, api_key_resolver, chat_token_resolver, rejected_call_auditor
 from .catalog import Catalog
+from .chat import LLM, ChatAgent, OpenAICompatibleLLM
+from .chat import router as chat_router
 from .config import Settings, get_settings
 from .db import Database
 from .health import HealthMonitor
@@ -23,6 +26,7 @@ from .sessions import LoginThrottle
 from .upstream import Connector, http_connector
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
+log = logging.getLogger(__name__)
 
 
 @dataclass
@@ -36,10 +40,16 @@ class Services:
     monitor: HealthMonitor
     resolve_api_key: Resolver
     throttle: LoginThrottle
+    chat: ChatAgent
+    chat_busy: set[uuid.UUID] = field(default_factory=set)
 
 
-def create_app(settings: Settings | None = None, connector: Connector | None = None, run_monitor: bool = True) -> FastAPI:
+def create_app(
+    settings: Settings | None = None, connector: Connector | None = None, run_monitor: bool = True, llm: LLM | None = None,
+) -> FastAPI:
     settings = settings or get_settings()
+    if settings.uses_dev_secrets:
+        log.warning("using built-in development signing secrets; set SESSION_SECRET and CHAT_TOKEN_SECRET")
     db = Database(settings.database_url)
     box = CredentialBox(settings.credential_encryption_key)
     catalog = Catalog(settings.max_concurrent_calls_per_upstream)
@@ -51,7 +61,11 @@ def create_app(settings: Settings | None = None, connector: Connector | None = N
         settings.health_interval_seconds, settings.health_timeout_seconds, settings.unreachable_after_failures,
     )
     resolve_api_key = api_key_resolver(db)
-    svc = Services(settings, db, box, catalog, hub, registry, monitor, resolve_api_key, LoginThrottle())
+    owned_llm = None if llm else OpenAICompatibleLLM(
+        settings.llm_base_url, settings.llm_api_key, settings.llm_model, settings.llm_timeout_seconds
+    )
+    chat_agent = ChatAgent(settings, llm or owned_llm)
+    svc = Services(settings, db, box, catalog, hub, registry, monitor, resolve_api_key, LoginThrottle(), chat_agent)
 
     auditor = Auditor(db)
     mcp_server = build_mcp_server(catalog, hub, auditor, box, connector)
@@ -75,11 +89,14 @@ def create_app(settings: Settings | None = None, connector: Connector | None = N
             finally:
                 if task:
                     task.cancel()
+        if owned_llm:
+            await owned_llm.aclose()
         await db.dispose()
 
     app = FastAPI(title="Urumi MCP Gateway", lifespan=lifespan)
     app.state.services = svc
     app.include_router(router)
     app.include_router(team_router)
-    app.mount("/", McpAuthMiddleware(mcp_app, [resolve_api_key], hub, rejected_call_auditor(db, auditor)))
+    app.include_router(chat_router)
+    app.mount("/", McpAuthMiddleware(mcp_app, [resolve_api_key, chat_token_resolver(db, settings.chat_token_secret)], hub, rejected_call_auditor(db, auditor)))
     return app

@@ -52,6 +52,11 @@ gateway:
     requests: { cpu: 100m, memory: 160Mi }
     limits: { cpu: "1", memory: 512Mi }
 
+# Chat agent: any OpenAI-compatible Chat Completions API (Groq by default; Ollama/OpenAI by changing these).
+llm:
+  baseUrl: https://api.groq.com/openai/v1
+  model: openai/gpt-oss-120b
+
 dashboard:
   image: urumi/dashboard:dev
   imagePullPolicy: IfNotPresent
@@ -64,16 +69,17 @@ notesMcp:
   image: urumi/notes-mcp:dev
   imagePullPolicy: IfNotPresent
   faultDelayMs: "0"
+  # Small request, generous CPU limit: a 250m limit throttled short Python bursts into multi-second tool calls.
   resources:
     requests: { cpu: 20m, memory: 64Mi }
-    limits: { cpu: 250m, memory: 192Mi }
+    limits: { cpu: "1", memory: 192Mi }
 
 fxMcp:
   image: urumi/fx-mcp:dev
   imagePullPolicy: IfNotPresent
   resources:
     requests: { cpu: 20m, memory: 64Mi }
-    limits: { cpu: 250m, memory: 192Mi }
+    limits: { cpu: "1", memory: 192Mi }
 
 networkPolicy:
   enabled: true

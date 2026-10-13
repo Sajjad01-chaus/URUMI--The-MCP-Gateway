@@ -194,3 +194,23 @@ input:focus, select:focus, textarea:focus, .button:focus-visible { outline: 2px 
   .main { padding: 20px 16px 40px; }
   .field-row { grid-template-columns: 1fr; }
 }
+
+/* Chat */
+.chat-page { display: flex; flex-direction: column; height: calc(100vh - 76px); min-height: 420px; }
+.chat-log { flex: 1; overflow-y: auto; padding: 18px; display: flex; flex-direction: column; gap: 14px; }
+.chat-entry { display: flex; flex-direction: column; gap: 6px; max-width: min(760px, 92%); }
+.chat-user { align-self: flex-end; align-items: flex-end; }
+.chat-assistant { align-self: flex-start; }
+.bubble { padding: 10px 14px; border-radius: 14px; white-space: pre-wrap; word-break: break-word; }
+.chat-user .bubble { background: var(--accent); color: var(--accent-text); border-bottom-right-radius: 4px; }
+.chat-assistant .bubble { background: var(--surface-2); border: 1px solid var(--border); border-bottom-left-radius: 4px; }
+.tool-calls { display: flex; flex-direction: column; gap: 6px; }
+.tool-call { border: 1px solid var(--border); border-radius: 8px; background: var(--surface); font-size: 13px; }
+.tool-call summary { cursor: pointer; padding: 6px 10px; list-style-position: inside; }
+.tool-call-error { border-color: var(--red-fg); }
+.tool-call-body { padding: 4px 10px 10px; }
+.tool-call-body pre { margin: 4px 0 10px; padding: 8px; background: var(--surface-2); border-radius: 6px; max-height: 260px; overflow: auto; white-space: pre-wrap; word-break: break-word; }
+.chat-input { display: flex; gap: 8px; margin-top: 12px; align-items: flex-end; }
+.chat-input textarea { resize: vertical; min-height: 44px; max-height: 200px; }
+.answer-code { margin: 6px 0; padding: 8px 10px; background: var(--surface); border: 1px solid var(--border); border-radius: 6px; white-space: pre-wrap; }
+.bubble code { background: var(--surface); padding: 1px 4px; border-radius: 4px; }

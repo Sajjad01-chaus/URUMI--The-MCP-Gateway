@@ -106,6 +106,28 @@ export interface AuditPage {
   next_cursor: number | null;
 }
 
+export interface ChatMessage {
+  role: "user" | "assistant";
+  content: string;
+}
+
+export interface ChatToolCall {
+  name: string;
+  arguments: Record<string, unknown> | null;
+  result: string;
+  is_error: boolean;
+  duration_ms: number;
+}
+
+export type StopReason =
+  | "answered" | "max_iterations" | "max_tool_calls" | "timeout" | "llm_error" | "malformed_tool_call" | "error";
+
+export interface ChatTurn {
+  answer: string;
+  tool_calls: ChatToolCall[];
+  stopped_reason: StopReason;
+}
+
 export class ApiError extends Error {
   constructor(
     public readonly status: number,
@@ -199,6 +221,8 @@ export const api = {
   keys: () => request<ApiKey[]>("GET", "/keys"),
   createKey: (name: string) => request<ApiKey & { key: string }>("POST", "/keys", { name }),
   revokeKey: (id: string) => request<void>("DELETE", `/keys/${id}`),
+
+  chat: (messages: ChatMessage[]) => request<ChatTurn>("POST", "/chat", { messages }),
 
   audit: (filters: Record<string, string | number | undefined | null>) => request<AuditPage>("GET", `/audit${q(filters)}`),
 };
