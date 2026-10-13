@@ -1,0 +1,123 @@
+{{- $appHost := include "platform.host" (dict "root" . "name" "app") }}
+{{- $mcpHost := include "platform.host" (dict "root" . "name" "mcp") }}
+{{- $seeds := list }}
+{{- range .Values.gateway.seedServers }}
+{{- $seeds = append $seeds (dict "slug" .slug "name" .name "url" .url "auth_type" .authType "auth_header_name" (.authHeaderName | default "") "credential_env" (printf "SEED_CRED_%s" (upper .credentialKey)) "timeout_seconds" (.timeoutSeconds | default 20)) }}
+{{- end }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: gateway
+  labels: {{- include "platform.labels" . | nindent 4 }}
+    app.kubernetes.io/name: gateway
+spec:
+  selector: {{- include "platform.selector" (dict "root" . "name" "gateway") | nindent 4 }}
+  ports:
+    - name: http
+      port: 8000
+      targetPort: http
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: gateway
+  labels: {{- include "platform.labels" . | nindent 4 }}
+    app.kubernetes.io/name: gateway
+spec:
+  # One replica in v1: MCP sessions and the tool catalog live in memory (design ADR-12).
+  replicas: 1
+  selector:
+    matchLabels: {{- include "platform.selector" (dict "root" . "name" "gateway") | nindent 6 }}
+  template:
+    metadata:
+      labels: {{- include "platform.labels" . | nindent 8 }}
+        app.kubernetes.io/name: gateway
+      annotations:
+        checksum/seeds: {{ $seeds | toJson | sha256sum }}
+    spec:
+      automountServiceAccountToken: false
+      securityContext: {{- include "platform.podSecurity" . | nindent 8 }}
+      initContainers:
+        # Waits for Postgres, then applies Alembic migrations (advisory-locked, safe to re-run).
+        - name: migrate
+          image: {{ .Values.gateway.image }}
+          imagePullPolicy: {{ .Values.gateway.imagePullPolicy }}
+          command:
+            - sh
+            - -c
+            - until python -c "import socket; socket.create_connection(('postgres', 5432), 2)" 2>/dev/null; do echo waiting for postgres; sleep 2; done; alembic upgrade head
+          workingDir: /app
+          env:
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef: { name: postgres-auth, key: password }
+            - name: DATABASE_URL
+              value: "postgresql+asyncpg://{{ .Values.postgres.user }}:$(POSTGRES_PASSWORD)@postgres:5432/{{ .Values.postgres.database }}"
+          securityContext: {{- include "platform.containerSecurity" . | nindent 12 }}
+          resources: {{- toYaml .Values.gateway.resources | nindent 12 }}
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+      containers:
+        - name: gateway
+          image: {{ .Values.gateway.image }}
+          imagePullPolicy: {{ .Values.gateway.imagePullPolicy }}
+          env:
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef: { name: postgres-auth, key: password }
+            - name: DATABASE_URL
+              value: "postgresql+asyncpg://{{ .Values.postgres.user }}:$(POSTGRES_PASSWORD)@postgres:5432/{{ .Values.postgres.database }}"
+            - name: CREDENTIAL_ENCRYPTION_KEY
+              valueFrom:
+                secretKeyRef: { name: gateway-secrets, key: credential-encryption-key }
+            - name: SESSION_SECRET
+              valueFrom:
+                secretKeyRef: { name: gateway-secrets, key: session-secret }
+            - name: CHAT_TOKEN_SECRET
+              valueFrom:
+                secretKeyRef: { name: gateway-secrets, key: chat-token-secret }
+            - name: BOOTSTRAP_ADMIN_EMAIL
+              valueFrom:
+                secretKeyRef: { name: gateway-secrets, key: bootstrap-admin-email }
+            - name: BOOTSTRAP_ADMIN_PASSWORD
+              valueFrom:
+                secretKeyRef: { name: gateway-secrets, key: bootstrap-admin-password }
+            {{- range .Values.gateway.seedServers }}
+            - name: SEED_CRED_{{ upper .credentialKey }}
+              valueFrom:
+                secretKeyRef: { name: gateway-seed-credentials, key: {{ .credentialKey }} }
+            {{- end }}
+            - name: SEED_SERVERS
+              value: {{ $seeds | toJson | quote }}
+            - name: ALLOWED_INTERNAL_HOSTS
+              value: {{ .Values.gateway.allowedInternalHosts | quote }}
+            - name: ALLOWED_MCP_HOSTS
+              value: "{{ $mcpHost }},{{ $mcpHost }}:*,{{ $appHost }},{{ $appHost }}:*,localhost:*,127.0.0.1:*"
+            - name: HEALTH_INTERVAL_SECONDS
+              value: {{ .Values.gateway.healthIntervalSeconds | quote }}
+            - name: DEFAULT_CALL_TIMEOUT_SECONDS
+              value: {{ .Values.gateway.defaultCallTimeoutSeconds | quote }}
+          ports:
+            - name: http
+              containerPort: 8000
+          startupProbe:
+            httpGet: { path: /healthz, port: http }
+            periodSeconds: 3
+            failureThreshold: 40
+          livenessProbe:
+            httpGet: { path: /healthz, port: http }
+            periodSeconds: 15
+            timeoutSeconds: 5
+          readinessProbe:
+            httpGet: { path: /readyz, port: http }
+            periodSeconds: 10
+            timeoutSeconds: 5
+          securityContext: {{- include "platform.containerSecurity" . | nindent 12 }}
+          resources: {{- toYaml .Values.gateway.resources | nindent 12 }}
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: tmp
+          emptyDir: {}

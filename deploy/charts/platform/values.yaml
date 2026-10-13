@@ -1,0 +1,98 @@
+global:
+  domain: 127-0-0-1.nip.io
+  tls:
+    enabled: false
+    clusterIssuer: ""
+
+hosts:
+  app: app
+  mcp: mcp
+
+postgres:
+  image: postgres:16.9-alpine
+  database: gateway
+  user: gateway
+  storage:
+    size: 2Gi
+    className: ""
+  resources:
+    requests: { cpu: 50m, memory: 128Mi }
+    limits: { cpu: 500m, memory: 512Mi }
+
+gateway:
+  image: urumi/gateway:dev
+  imagePullPolicy: IfNotPresent
+  healthIntervalSeconds: 15
+  defaultCallTimeoutSeconds: 20
+  # SSRF guard: private addresses are allowed only for these host patterns.
+  allowedInternalHosts: "*.store-*.svc.cluster.local,*-mcp.platform.svc.cluster.local"
+  # Egress NetworkPolicy: namespaces whose MCP pods the gateway may call on :8000.
+  upstreamNamespaces: [platform, store-main]
+  seedServers:
+    - slug: woo
+      name: WooCommerce (main store)
+      url: http://woo-mcp.store-main.svc.cluster.local:8000/mcp
+      authType: bearer
+      credentialKey: woo
+    - slug: notes
+      name: Team Notes
+      url: http://notes-mcp.platform.svc.cluster.local:8000/mcp
+      authType: bearer
+      credentialKey: notes
+    - slug: fx
+      name: Currency (FX)
+      url: http://fx-mcp.platform.svc.cluster.local:8000/mcp
+      authType: header
+      authHeaderName: X-API-Key
+      credentialKey: fx
+  resources:
+    requests: { cpu: 100m, memory: 160Mi }
+    limits: { cpu: "1", memory: 512Mi }
+
+notesMcp:
+  image: urumi/notes-mcp:dev
+  imagePullPolicy: IfNotPresent
+  faultDelayMs: "0"
+  resources:
+    requests: { cpu: 20m, memory: 64Mi }
+    limits: { cpu: 250m, memory: 192Mi }
+
+fxMcp:
+  image: urumi/fx-mcp:dev
+  imagePullPolicy: IfNotPresent
+  resources:
+    requests: { cpu: 20m, memory: 64Mi }
+    limits: { cpu: 250m, memory: 192Mi }
+
+networkPolicy:
+  enabled: true
+  ingressController:
+    namespace: kube-system
+    podLabels:
+      app.kubernetes.io/name: traefik
+  dns:
+    namespace: kube-system
+    podLabels:
+      k8s-app: kube-dns
+  # Gateway egress to the internet (Groq, external MCP servers) excludes these ranges.
+  blockedEgressCidrs:
+    - 10.0.0.0/8
+    - 172.16.0.0/12
+    - 192.168.0.0/16
+    - 169.254.0.0/16
+    - 100.64.0.0/10
+    - 127.0.0.0/8
+
+# Set create=false to manage these Secrets outside Helm (same names/keys as templates/secrets.yaml).
+secrets:
+  create: true
+  postgresPassword: ""
+  sessionSecret: ""
+  chatTokenSecret: ""
+  credentialEncryptionKey: ""
+  bootstrapAdminEmail: ""
+  bootstrapAdminPassword: ""
+  wooMcpToken: ""
+  notesMcpToken: ""
+  fxMcpApiKey: ""
+  groqApiKey: ""

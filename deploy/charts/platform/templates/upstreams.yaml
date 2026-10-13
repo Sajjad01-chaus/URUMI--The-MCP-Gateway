@@ -1,0 +1,75 @@
+{{- $upstreams := list
+  (dict "name" "notes-mcp" "values" .Values.notesMcp "secret" "notes-mcp-auth" "secretKey" "token" "envName" "MCP_AUTH_TOKEN")
+  (dict "name" "fx-mcp" "values" .Values.fxMcp "secret" "fx-mcp-auth" "secretKey" "api-key" "envName" "FX_API_KEY") }}
+{{- range $u := $upstreams }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $u.name }}
+  labels: {{- include "platform.labels" $ | nindent 4 }}
+    app.kubernetes.io/name: {{ $u.name }}
+spec:
+  selector: {{- include "platform.selector" (dict "root" $ "name" $u.name) | nindent 4 }}
+  ports:
+    - name: http
+      port: 8000
+      targetPort: http
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ $u.name }}
+  labels: {{- include "platform.labels" $ | nindent 4 }}
+    app.kubernetes.io/name: {{ $u.name }}
+spec:
+  replicas: 1
+  selector:
+    matchLabels: {{- include "platform.selector" (dict "root" $ "name" $u.name) | nindent 6 }}
+  template:
+    metadata:
+      labels: {{- include "platform.labels" $ | nindent 8 }}
+        app.kubernetes.io/name: {{ $u.name }}
+        urumi.io/mcp-upstream: "true"
+    spec:
+      automountServiceAccountToken: false
+      securityContext: {{- include "platform.podSecurity" $ | nindent 8 }}
+      containers:
+        - name: {{ $u.name }}
+          image: {{ $u.values.image }}
+          imagePullPolicy: {{ $u.values.imagePullPolicy }}
+          env:
+            - name: {{ $u.envName }}
+              valueFrom:
+                secretKeyRef: { name: {{ $u.secret }}, key: {{ $u.secretKey }} }
+            - name: ALLOWED_HOSTS
+              value: {{ include "platform.serviceHosts" (dict "root" $ "name" $u.name) | quote }}
+            {{- if eq $u.name "notes-mcp" }}
+            - name: NOTES_DB_PATH
+              value: /data/notes.db
+            - name: FAULT_DELAY_MS
+              value: {{ $u.values.faultDelayMs | quote }}
+            {{- end }}
+          ports:
+            - name: http
+              containerPort: 8000
+          readinessProbe:
+            httpGet: { path: /healthz, port: http }
+            periodSeconds: 10
+          livenessProbe:
+            httpGet: { path: /healthz, port: http }
+            periodSeconds: 15
+            timeoutSeconds: 5
+          securityContext: {{- include "platform.containerSecurity" $ | nindent 12 }}
+          resources: {{- toYaml $u.values.resources | nindent 12 }}
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+            - name: data
+              mountPath: /data
+      volumes:
+        - name: tmp
+          emptyDir: {}
+        - name: data
+          emptyDir: {}
+{{- end }}

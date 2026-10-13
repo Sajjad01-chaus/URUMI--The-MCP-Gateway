@@ -30,6 +30,7 @@ spec:
     metadata:
       labels: {{- include "store.labels" . | nindent 8 }}
         app.kubernetes.io/name: woo-mcp
+        urumi.io/mcp-upstream: "true"
     spec:
       automountServiceAccountToken: false
       securityContext:

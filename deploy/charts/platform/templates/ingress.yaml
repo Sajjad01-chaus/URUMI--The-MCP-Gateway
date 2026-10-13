@@ -1,0 +1,39 @@
+{{- $appHost := include "platform.host" (dict "root" . "name" "app") }}
+{{- $mcpHost := include "platform.host" (dict "root" . "name" "mcp") }}
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: gateway
+  labels: {{- include "platform.labels" . | nindent 4 }}
+    app.kubernetes.io/name: gateway
+  {{- if and .Values.global.tls.enabled .Values.global.tls.clusterIssuer }}
+  annotations:
+    cert-manager.io/cluster-issuer: {{ .Values.global.tls.clusterIssuer }}
+  {{- end }}
+spec:
+  ingressClassName: traefik
+  {{- if .Values.global.tls.enabled }}
+  tls:
+    - hosts: [{{ $appHost | quote }}, {{ $mcpHost | quote }}]
+      secretName: platform-tls
+  {{- end }}
+  rules:
+    # Only the dashboard API and the MCP endpoint are public; /healthz, /readyz stay internal.
+    - host: {{ $appHost | quote }}
+      http:
+        paths:
+          - path: /api
+            pathType: Prefix
+            backend:
+              service:
+                name: gateway
+                port: { name: http }
+    - host: {{ $mcpHost | quote }}
+      http:
+        paths:
+          - path: /mcp
+            pathType: Prefix
+            backend:
+              service:
+                name: gateway
+                port: { name: http }

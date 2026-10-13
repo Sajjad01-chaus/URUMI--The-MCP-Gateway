@@ -1,0 +1,14 @@
+global:
+  domain: CHANGE-ME.duckdns.org
+  tls:
+    enabled: true
+    clusterIssuer: letsencrypt-prod
+
+postgres:
+  storage:
+    size: 10Gi
+
+gateway:
+  resources:
+    requests: { cpu: 200m, memory: 256Mi }
+    limits: { cpu: "1", memory: 768Mi }

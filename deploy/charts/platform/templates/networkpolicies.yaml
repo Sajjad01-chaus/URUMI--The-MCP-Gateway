@@ -1,0 +1,114 @@
+{{- if .Values.networkPolicy.enabled }}
+{{- $np := .Values.networkPolicy }}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny-ingress
+  labels: {{- include "platform.labels" . | nindent 4 }}
+spec:
+  podSelector: {}
+  policyTypes: [Ingress]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: postgres-from-gateway
+  labels: {{- include "platform.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: postgres
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: gateway
+      ports:
+        - port: 5432
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: gateway-from-ingress
+  labels: {{- include "platform.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: gateway
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ $np.ingressController.namespace }}
+          podSelector:
+            matchLabels: {{- toYaml $np.ingressController.podLabels | nindent 14 }}
+      ports:
+        - port: 8000
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: upstreams-from-gateway
+  labels: {{- include "platform.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      urumi.io/mcp-upstream: "true"
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: gateway
+      ports:
+        - port: 8000
+---
+# Gateway egress: DNS, its database, MCP pods on :8000, and the public internet only.
+# Blocks the Kubernetes API, node IPs, cloud metadata (169.254.169.254), MySQL, WordPress.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: gateway-egress
+  labels: {{- include "platform.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: gateway
+  policyTypes: [Egress]
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ $np.dns.namespace }}
+          podSelector:
+            matchLabels: {{- toYaml $np.dns.podLabels | nindent 14 }}
+      ports:
+        - { port: 53, protocol: UDP }
+        - { port: 53, protocol: TCP }
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: postgres
+      ports:
+        - port: 5432
+    - to:
+        - namespaceSelector:
+            matchExpressions:
+              - key: kubernetes.io/metadata.name
+                operator: In
+                values: {{- toYaml .Values.gateway.upstreamNamespaces | nindent 18 }}
+          podSelector:
+            matchLabels:
+              urumi.io/mcp-upstream: "true"
+      ports:
+        - port: 8000
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            except: {{- toYaml $np.blockedEgressCidrs | nindent 14 }}
+      ports:
+        - port: 443
+        - port: 80
+{{- end }}

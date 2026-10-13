@@ -1,0 +1,107 @@
+import uuid
+from datetime import UTC, datetime
+
+from sqlalchemy import JSON, BigInteger, Boolean, DateTime, ForeignKey, Integer, LargeBinary, String, Text, UniqueConstraint
+from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
+
+
+def utcnow() -> datetime:
+    return datetime.now(UTC)
+
+
+class Base(DeclarativeBase):
+    pass
+
+
+class User(Base):
+    __tablename__ = "users"
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    email: Mapped[str] = mapped_column(String(320), unique=True)
+    name: Mapped[str] = mapped_column(String(200), default="")
+    password_hash: Mapped[str | None] = mapped_column(String(255))
+    role: Mapped[str] = mapped_column(String(20), default="member")
+    status: Mapped[str] = mapped_column(String(20), default="active")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    last_login_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class ApiKey(Base):
+    __tablename__ = "api_keys"
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    name: Mapped[str] = mapped_column(String(100), default="")
+    prefix: Mapped[str] = mapped_column(String(20))
+    key_hash: Mapped[str] = mapped_column(String(64), unique=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    last_used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    revoked_by: Mapped[uuid.UUID | None] = mapped_column()
+
+
+class Invite(Base):
+    __tablename__ = "invites"
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    email: Mapped[str] = mapped_column(String(320))
+    role: Mapped[str] = mapped_column(String(20), default="member")
+    token_hash: Mapped[str] = mapped_column(String(64), unique=True)
+    invited_by: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"))
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    accepted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class UpstreamServer(Base):
+    __tablename__ = "upstream_servers"
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    slug: Mapped[str] = mapped_column(String(20), unique=True)
+    name: Mapped[str] = mapped_column(String(100))
+    url: Mapped[str] = mapped_column(String(500))
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    auth_type: Mapped[str] = mapped_column(String(10), default="none")
+    auth_header_name: Mapped[str | None] = mapped_column(String(100))
+    credential_encrypted: Mapped[bytes | None] = mapped_column(LargeBinary)
+    timeout_seconds: Mapped[int] = mapped_column(Integer, default=20)
+    status: Mapped[str] = mapped_column(String(20), default="unknown")
+    last_error: Mapped[str | None] = mapped_column(Text)
+    last_checked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    tools_cache: Mapped[list | None] = mapped_column(JSON)
+    is_seeded: Mapped[bool] = mapped_column(Boolean, default=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+
+
+class ToolPolicy(Base):
+    __tablename__ = "tool_policies"
+    __table_args__ = (UniqueConstraint("server_id", "tool_name"),)
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    server_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("upstream_servers.id", ondelete="CASCADE"))
+    tool_name: Mapped[str] = mapped_column(String(100))
+    min_role: Mapped[str] = mapped_column(String(20))
+    updated_by: Mapped[uuid.UUID | None] = mapped_column()
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+
+
+class AuditLog(Base):
+    __tablename__ = "audit_log"
+
+    id: Mapped[int] = mapped_column(BigInteger().with_variant(Integer, "sqlite"), primary_key=True, autoincrement=True)
+    ts: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, index=True)
+    user_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), index=True)
+    user_email: Mapped[str] = mapped_column(String(320), default="")
+    api_key_id: Mapped[uuid.UUID | None] = mapped_column()
+    source: Mapped[str] = mapped_column(String(10))
+    server_id: Mapped[uuid.UUID | None] = mapped_column()
+    server_slug: Mapped[str] = mapped_column(String(20), index=True)
+    tool_name: Mapped[str] = mapped_column(String(100))
+    exposed_name: Mapped[str] = mapped_column(String(130))
+    duration_ms: Mapped[int] = mapped_column(Integer, default=0)
+    outcome: Mapped[str] = mapped_column(String(20), index=True)
+    error_message: Mapped[str | None] = mapped_column(Text)
+    request_id: Mapped[str | None] = mapped_column(String(64))
+    client_name: Mapped[str | None] = mapped_column(String(100))
+    args_preview: Mapped[dict | None] = mapped_column(JSON)

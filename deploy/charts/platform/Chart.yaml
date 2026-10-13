@@ -1,0 +1,6 @@
+apiVersion: v2
+name: platform
+description: Team MCP gateway platform - gateway (+ Postgres), dashboard, and the notes/fx demo upstreams.
+type: application
+version: 0.1.0
+appVersion: "0.1.0"
