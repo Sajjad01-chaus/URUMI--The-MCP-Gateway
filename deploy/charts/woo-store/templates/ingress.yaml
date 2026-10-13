@@ -1,0 +1,28 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: storefront
+  labels: {{- include "store.labels" . | nindent 4 }}
+    app.kubernetes.io/name: wordpress
+  {{- if and .Values.global.tls.enabled .Values.global.tls.clusterIssuer }}
+  annotations:
+    cert-manager.io/cluster-issuer: {{ .Values.global.tls.clusterIssuer }}
+  {{- end }}
+spec:
+  ingressClassName: traefik
+  {{- if .Values.global.tls.enabled }}
+  tls:
+    - hosts: [{{ include "store.host" . | quote }}]
+      secretName: storefront-tls
+  {{- end }}
+  rules:
+    - host: {{ include "store.host" . | quote }}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: wordpress
+                port:
+                  name: http

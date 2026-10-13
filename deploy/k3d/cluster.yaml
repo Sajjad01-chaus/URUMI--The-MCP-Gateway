@@ -1,0 +1,19 @@
+# Local cluster: one k3s node (same version as prod), host ports 80/443 -> Traefik.
+apiVersion: k3d.io/v1alpha5
+kind: Simple
+metadata:
+  name: urumi
+servers: 1
+agents: 0
+image: rancher/k3s:v1.35.5-k3s1
+kubeAPI:
+  host: 127.0.0.1
+  hostIP: 127.0.0.1
+  hostPort: "6550"
+ports:
+  - port: 80:80
+    nodeFilters:
+      - loadbalancer
+  - port: 443:443
+    nodeFilters:
+      - loadbalancer

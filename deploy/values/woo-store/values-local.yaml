@@ -1,0 +1,12 @@
+global:
+  domain: 127-0-0-1.nip.io
+  tls:
+    enabled: false
+
+mysql:
+  storage:
+    size: 2Gi
+
+wordpress:
+  storage:
+    size: 2Gi

@@ -1,0 +1,27 @@
+# Secrets
+deploy/secrets/*
+!deploy/secrets/secrets.example.yaml
+*.env
+.env*
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+.pytest_cache/
+.ruff_cache/
+*.egg-info/
+
+# Node
+node_modules/
+dist/
+
+# Helm
+deploy/charts/*/charts/
+*.tgz
+
+# Editors / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

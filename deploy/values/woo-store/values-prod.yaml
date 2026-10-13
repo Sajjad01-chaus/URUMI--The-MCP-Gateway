@@ -1,0 +1,22 @@
+global:
+  domain: CHANGE-ME.duckdns.org
+  tls:
+    enabled: true
+    clusterIssuer: letsencrypt-prod
+
+mysql:
+  storage:
+    size: 10Gi
+  resources:
+    requests: { cpu: 200m, memory: 384Mi }
+    limits: { cpu: "1", memory: 1Gi }
+
+wordpress:
+  storage:
+    size: 10Gi
+  resources:
+    requests: { cpu: 200m, memory: 256Mi }
+    limits: { cpu: "1", memory: 768Mi }
+
+bootstrap:
+  sampleProducts: false

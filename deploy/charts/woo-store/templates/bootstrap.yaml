@@ -1,0 +1,96 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: store-bootstrap
+  labels: {{- include "store.labels" . | nindent 4 }}
+    app.kubernetes.io/name: store-bootstrap
+data:
+  bootstrap.sh: |-
+{{ .Files.Get "files/bootstrap.sh" | indent 4 }}
+  register-api-key.php: |-
+{{ .Files.Get "files/register-api-key.php" | indent 4 }}
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: store-bootstrap
+  labels: {{- include "store.labels" . | nindent 4 }}
+    app.kubernetes.io/name: store-bootstrap
+  annotations:
+    helm.sh/hook: post-install,post-upgrade
+    helm.sh/hook-delete-policy: before-hook-creation
+spec:
+  backoffLimit: 2
+  activeDeadlineSeconds: 1200
+  template:
+    metadata:
+      labels: {{- include "store.labels" . | nindent 8 }}
+        app.kubernetes.io/name: store-bootstrap
+      annotations:
+        checksum/script: {{ .Files.Get "files/bootstrap.sh" | sha256sum }}
+    spec:
+      restartPolicy: Never
+      # Same uid as Apache's www-data in the WordPress image, so file ownership matches.
+      securityContext:
+        runAsUser: 33
+        runAsGroup: 33
+      # The WordPress volume is ReadWriteOnce: run on the node where WordPress runs.
+      affinity:
+        podAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            - topologyKey: kubernetes.io/hostname
+              labelSelector:
+                matchLabels:
+                  app.kubernetes.io/name: wordpress
+                  app.kubernetes.io/instance: {{ .Release.Name }}
+      containers:
+        - name: bootstrap
+          image: {{ .Values.bootstrap.image }}
+          command: ["sh", "/scripts/bootstrap.sh"]
+          workingDir: /var/www/html
+          env:
+            {{- include "store.wordpressEnv" . | nindent 12 }}
+            - name: HOME
+              value: /tmp
+            - name: WP_URL
+              value: {{ include "store.url" . | quote }}
+            - name: STORE_TITLE
+              value: {{ .Values.store.title | quote }}
+            - name: STORE_TIMEZONE
+              value: {{ .Values.store.timezone | quote }}
+            - name: STORE_CURRENCY
+              value: {{ .Values.store.currency | quote }}
+            - name: STORE_COUNTRY
+              value: {{ .Values.store.country | quote }}
+            - name: WOO_VERSION
+              value: {{ .Values.bootstrap.wooVersion | quote }}
+            - name: SAMPLE_PRODUCTS
+              value: {{ .Values.bootstrap.sampleProducts | quote }}
+            - name: WP_ADMIN_USER
+              valueFrom:
+                secretKeyRef: { name: wp-admin, key: username }
+            - name: WP_ADMIN_PASSWORD
+              valueFrom:
+                secretKeyRef: { name: wp-admin, key: password }
+            - name: WP_ADMIN_EMAIL
+              valueFrom:
+                secretKeyRef: { name: wp-admin, key: email }
+            - name: WOO_CONSUMER_KEY
+              valueFrom:
+                secretKeyRef: { name: woo-api, key: consumer-key }
+            - name: WOO_CONSUMER_SECRET
+              valueFrom:
+                secretKeyRef: { name: woo-api, key: consumer-secret }
+          resources: {{- toYaml .Values.bootstrap.resources | nindent 12 }}
+          volumeMounts:
+            - name: wordpress
+              mountPath: /var/www/html
+            - name: scripts
+              mountPath: /scripts
+      volumes:
+        - name: wordpress
+          persistentVolumeClaim:
+            claimName: wordpress-data
+        - name: scripts
+          configMap:
+            name: store-bootstrap

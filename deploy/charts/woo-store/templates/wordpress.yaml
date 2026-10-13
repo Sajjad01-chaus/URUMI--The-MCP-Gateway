@@ -1,0 +1,80 @@
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: wordpress-data
+  labels: {{- include "store.labels" . | nindent 4 }}
+    app.kubernetes.io/name: wordpress
+  annotations:
+    helm.sh/resource-policy: keep
+spec:
+  accessModes: ["ReadWriteOnce"]
+  {{- with .Values.wordpress.storage.className }}
+  storageClassName: {{ . }}
+  {{- end }}
+  resources:
+    requests:
+      storage: {{ .Values.wordpress.storage.size }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: wordpress
+  labels: {{- include "store.labels" . | nindent 4 }}
+    app.kubernetes.io/name: wordpress
+spec:
+  selector:
+    app.kubernetes.io/name: wordpress
+    app.kubernetes.io/instance: {{ .Release.Name }}
+  ports:
+    - name: http
+      port: 80
+      targetPort: http
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: wordpress
+  labels: {{- include "store.labels" . | nindent 4 }}
+    app.kubernetes.io/name: wordpress
+spec:
+  replicas: 1
+  # RWO volume: old and new pods must not run at the same time.
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: wordpress
+      app.kubernetes.io/instance: {{ .Release.Name }}
+  template:
+    metadata:
+      labels: {{- include "store.labels" . | nindent 8 }}
+        app.kubernetes.io/name: wordpress
+    spec:
+      containers:
+        - name: wordpress
+          image: {{ .Values.wordpress.image }}
+          env: {{- include "store.wordpressEnv" . | nindent 12 }}
+          ports:
+            - name: http
+              containerPort: 80
+          # Liveness: Apache serves a static file. Readiness: PHP + database answer.
+          startupProbe:
+            httpGet: { path: /wp-includes/images/blank.gif, port: http }
+            periodSeconds: 5
+            failureThreshold: 60
+          livenessProbe:
+            httpGet: { path: /wp-includes/images/blank.gif, port: http }
+            periodSeconds: 15
+            timeoutSeconds: 5
+          readinessProbe:
+            httpGet: { path: /wp-login.php, port: http }
+            periodSeconds: 10
+            timeoutSeconds: 5
+          resources: {{- toYaml .Values.wordpress.resources | nindent 12 }}
+          volumeMounts:
+            - name: data
+              mountPath: /var/www/html
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: wordpress-data
