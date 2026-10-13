@@ -2,7 +2,7 @@
 {{- $mcpHost := include "platform.host" (dict "root" . "name" "mcp") }}
 {{- $seeds := list }}
 {{- range .Values.gateway.seedServers }}
-{{- $seeds = append $seeds (dict "slug" .slug "name" .name "url" .url "auth_type" .authType "auth_header_name" (.authHeaderName | default "") "credential_env" (printf "SEED_CRED_%s" (upper .credentialKey)) "timeout_seconds" (.timeoutSeconds | default 20)) }}
+{{- $seeds = append $seeds (dict "slug" .slug "name" .name "url" .url "auth_type" .authType "auth_header_name" (.authHeaderName | default "") "credential_env" (printf "SEED_CRED_%s" (upper .credentialKey)) "timeout_seconds" (.timeoutSeconds | default 20) "tool_policies" (.toolPolicies | default dict)) }}
 {{- end }}
 apiVersion: v1
 kind: Service
@@ -88,6 +88,10 @@ spec:
               valueFrom:
                 secretKeyRef: { name: gateway-seed-credentials, key: {{ .credentialKey }} }
             {{- end }}
+            - name: PUBLIC_APP_URL
+              value: "{{ ternary "https" "http" .Values.global.tls.enabled }}://{{ $appHost }}"
+            - name: COOKIE_SECURE
+              value: {{ .Values.global.tls.enabled | quote }}
             - name: SEED_SERVERS
               value: {{ $seeds | toJson | quote }}
             - name: ALLOWED_INTERNAL_HOSTS

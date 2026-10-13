@@ -1,14 +1,19 @@
+import logging
 import uuid
 from datetime import datetime
+from typing import Any, Literal
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel
-from sqlalchemy import text
+from sqlalchemy import select, text
 
-from .auth import Principal, bearer_token
-from .catalog import UpstreamState, exposed_name
+from .auth import Principal
+from .catalog import UpstreamState, default_min_role, exposed_name
+from .deps import current_principal, require_admin, services
+from .models import AuditLog
 from .registry import RegistryError, ServerIn, ServerPatch
 
+log = logging.getLogger(__name__)
 router = APIRouter()
 
 
@@ -36,24 +41,6 @@ class ServerOut(BaseModel):
     last_error: str | None
     last_checked_at: datetime | None
     tools: list[ToolOut]
-
-
-def services(request: Request):
-    return request.app.state.services
-
-
-async def current_principal(request: Request) -> Principal:
-    token = bearer_token(request.headers)
-    principal = await services(request).resolve_api_key(token) if token else None
-    if principal is None:
-        raise HTTPException(401, "authentication required")
-    return principal
-
-
-async def require_admin(principal: Principal = Depends(current_principal)) -> Principal:
-    if principal.role != "admin":
-        raise HTTPException(403, "admin role required")
-    return principal
 
 
 def server_out(svc, state: UpstreamState) -> ServerOut:
@@ -91,6 +78,7 @@ async def readyz(request: Request):
         async with services(request).db.session() as session:
             await session.execute(text("SELECT 1"))
     except Exception as exc:
+        log.warning("readiness check failed: %s", exc)
         raise HTTPException(503, "database unavailable") from exc
     return {"status": "ready"}
 
@@ -147,3 +135,110 @@ async def test_server(server_id: uuid.UUID, request: Request, _: Principal = Dep
 async def list_tools(request: Request, principal: Principal = Depends(current_principal)):
     tools = services(request).catalog.visible_tools(principal.role)
     return [{"name": t.name, "description": t.description} for t in tools]
+
+
+class PermissionOut(BaseModel):
+    server_slug: str
+    tool: str
+    exposed_name: str
+    read_only: bool
+    default_role: str
+    override: str | None
+    min_role: str
+
+
+class PermissionIn(BaseModel):
+    min_role: Literal["member", "admin"] | None
+
+
+class AuditOut(BaseModel):
+    id: int
+    ts: datetime
+    user_email: str
+    api_key_id: uuid.UUID | None
+    source: str
+    server_slug: str
+    tool_name: str
+    exposed_name: str
+    duration_ms: int
+    outcome: str
+    error_message: str | None
+    client_name: str | None
+    args_preview: dict[str, Any] | None
+
+
+class AuditPage(BaseModel):
+    items: list[AuditOut]
+    next_cursor: int | None
+
+
+@router.get("/api/permissions", response_model=list[PermissionOut])
+async def list_permissions(request: Request, _: Principal = Depends(require_admin)):
+    catalog = services(request).catalog
+    return [
+        PermissionOut(
+            server_slug=s.slug, tool=t.name, exposed_name=exposed_name(s.slug, t.name),
+            read_only=bool(t.annotations and t.annotations.read_only_hint), default_role=default_min_role(t),
+            override=catalog.policies.get((s.slug, t.name)), min_role=catalog.min_role(s.slug, t),
+        )
+        for s in sorted(catalog.servers.values(), key=lambda s: s.slug)
+        for t in s.tools
+    ]
+
+
+@router.put("/api/permissions/{slug}/{tool}", response_model=PermissionOut)
+async def set_permission(slug: str, tool: str, data: PermissionIn, request: Request, admin: Principal = Depends(require_admin)):
+    """min_role=null removes the override, so the annotation default applies again."""
+    svc = services(request)
+    state = svc.catalog.servers.get(slug)
+    match = next((t for t in state.tools if t.name == tool), None) if state else None
+    if match is None:
+        raise HTTPException(404, f"no tool '{tool}' on server '{slug}'")
+    await svc.registry.set_policy(state, tool, data.min_role, admin.user_id)
+    # Who can see the tool changed, so connected clients should re-list.
+    await svc.hub.notify_tools_changed()
+    return PermissionOut(
+        server_slug=slug, tool=tool, exposed_name=exposed_name(slug, tool),
+        read_only=bool(match.annotations and match.annotations.read_only_hint), default_role=default_min_role(match),
+        override=data.min_role, min_role=svc.catalog.min_role(slug, match),
+    )
+
+
+@router.get("/api/audit", response_model=AuditPage)
+async def list_audit(
+    request: Request,
+    principal: Principal = Depends(current_principal),
+    user: str | None = None,
+    server: str | None = None,
+    tool: str | None = None,
+    outcome: str | None = None,
+    source: str | None = None,
+    since: datetime | None = Query(None, alias="from"),
+    until: datetime | None = Query(None, alias="to"),
+    cursor: int | None = None,
+    limit: int = Query(50, ge=1, le=200),
+):
+    """Newest first. Admins see everyone; members only their own calls. `cursor` = last id of the previous page."""
+    query = select(AuditLog).order_by(AuditLog.id.desc()).limit(limit + 1)
+    if principal.role != "admin":
+        query = query.where(AuditLog.user_id == principal.user_id)
+    elif user:
+        query = query.where(AuditLog.user_email == user.strip().lower())
+    filters = {AuditLog.server_slug: server, AuditLog.exposed_name: tool, AuditLog.outcome: outcome, AuditLog.source: source}
+    for column, value in filters.items():
+        if value:
+            query = query.where(column == value)
+    if since:
+        query = query.where(AuditLog.ts >= since)
+    if until:
+        query = query.where(AuditLog.ts < until)
+    if cursor:
+        query = query.where(AuditLog.id < cursor)
+    async with services(request).db.session() as session:
+        rows = list((await session.scalars(query)).all())
+    more = len(rows) > limit
+    rows = rows[:limit]
+    return AuditPage(
+        items=[AuditOut.model_validate(r, from_attributes=True) for r in rows],
+        next_cursor=rows[-1].id if more else None,
+    )

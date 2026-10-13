@@ -39,6 +39,9 @@ gateway:
       url: http://notes-mcp.platform.svc.cluster.local:8000/mcp
       authType: bearer
       credentialKey: notes
+      # Lets members save notes (create_note is a write tool, admin-only by default). Applied once, at seeding.
+      toolPolicies:
+        create_note: member
     - slug: fx
       name: Currency (FX)
       url: http://fx-mcp.platform.svc.cluster.local:8000/mcp

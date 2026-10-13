@@ -8,8 +8,9 @@ from fastapi import FastAPI
 from mcp.server.transport_security import TransportSecuritySettings
 
 from .api import router
+from .team import router as team_router
 from .audit import Auditor
-from .auth import McpAuthMiddleware, Resolver, api_key_resolver
+from .auth import McpAuthMiddleware, Resolver, api_key_resolver, rejected_call_auditor
 from .catalog import Catalog
 from .config import Settings, get_settings
 from .db import Database
@@ -18,6 +19,7 @@ from .hub import SessionHub
 from .mcp_gateway import build_mcp_server
 from .registry import Registry
 from .security import CredentialBox
+from .sessions import LoginThrottle
 from .upstream import Connector, http_connector
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
@@ -33,6 +35,7 @@ class Services:
     registry: Registry
     monitor: HealthMonitor
     resolve_api_key: Resolver
+    throttle: LoginThrottle
 
 
 def create_app(settings: Settings | None = None, connector: Connector | None = None, run_monitor: bool = True) -> FastAPI:
@@ -48,9 +51,10 @@ def create_app(settings: Settings | None = None, connector: Connector | None = N
         settings.health_interval_seconds, settings.health_timeout_seconds, settings.unreachable_after_failures,
     )
     resolve_api_key = api_key_resolver(db)
-    svc = Services(settings, db, box, catalog, hub, registry, monitor, resolve_api_key)
+    svc = Services(settings, db, box, catalog, hub, registry, monitor, resolve_api_key, LoginThrottle())
 
-    mcp_server = build_mcp_server(catalog, hub, Auditor(db), box, connector)
+    auditor = Auditor(db)
+    mcp_server = build_mcp_server(catalog, hub, auditor, box, connector)
     mcp_app = mcp_server.streamable_http_app(
         transport_security=TransportSecuritySettings(
             enable_dns_rebinding_protection=True,
@@ -76,5 +80,6 @@ def create_app(settings: Settings | None = None, connector: Connector | None = N
     app = FastAPI(title="Urumi MCP Gateway", lifespan=lifespan)
     app.state.services = svc
     app.include_router(router)
-    app.mount("/", McpAuthMiddleware(mcp_app, [resolve_api_key], hub))
+    app.include_router(team_router)
+    app.mount("/", McpAuthMiddleware(mcp_app, [resolve_api_key], hub, rejected_call_auditor(db, auditor)))
     return app

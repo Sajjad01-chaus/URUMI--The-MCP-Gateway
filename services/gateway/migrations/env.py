@@ -1,11 +1,16 @@
 import asyncio
 import os
+from logging.config import fileConfig
 
 from alembic import context
 from sqlalchemy import pool, text
 from sqlalchemy.ext.asyncio import create_async_engine
 
 from gateway.models import Base
+
+# Apply alembic.ini's [loggers] section; without this Alembic's INFO lines are dropped.
+if context.config.config_file_name:
+    fileConfig(context.config.config_file_name)
 
 target_metadata = Base.metadata
 MIGRATION_LOCK_ID = 727274  # Postgres advisory lock: only one replica migrates at a time.

@@ -15,6 +15,7 @@ class SeedServer(BaseModel):
     auth_header_name: str | None = None
     credential_env: str | None = None
     timeout_seconds: int = 20
+    tool_policies: dict[str, str] = {}
 
 
 class Settings(BaseSettings):
@@ -26,6 +27,10 @@ class Settings(BaseSettings):
     chat_token_secret: str = "dev-only-chat-secret-change-me"
     bootstrap_admin_email: str = ""
     bootstrap_admin_password: str = ""
+    public_app_url: str = "http://app.127-0-0-1.nip.io"
+    cookie_secure: bool = False
+    session_ttl_seconds: int = 12 * 3600
+    invite_ttl_hours: int = 72
 
     seed_servers: str = "[]"
     allowed_internal_hosts: str = ""

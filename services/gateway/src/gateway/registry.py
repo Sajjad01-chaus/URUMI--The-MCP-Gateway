@@ -114,13 +114,16 @@ class Registry:
                 if seed.slug in existing:
                     continue
                 credential = os.environ.get(seed.credential_env, "") if seed.credential_env else ""
-                session.add(
-                    UpstreamServer(
-                        slug=seed.slug, name=seed.name, url=seed.url, auth_type=seed.auth_type,
-                        auth_header_name=seed.auth_header_name, timeout_seconds=seed.timeout_seconds,
-                        credential_encrypted=self.box.encrypt(credential) if credential else None, is_seeded=True,
-                    )
+                row = UpstreamServer(
+                    slug=seed.slug, name=seed.name, url=seed.url, auth_type=seed.auth_type,
+                    auth_header_name=seed.auth_header_name, timeout_seconds=seed.timeout_seconds,
+                    credential_encrypted=self.box.encrypt(credential) if credential else None, is_seeded=True,
                 )
+                session.add(row)
+                await session.flush()
+                # Seeded overrides are written only with the new server, so later admin changes stick.
+                for tool_name, min_role in seed.tool_policies.items():
+                    session.add(ToolPolicy(server_id=row.id, tool_name=tool_name, min_role=min_role))
                 log.info("seeded upstream %s -> %s", seed.slug, seed.url)
             await session.commit()
 
@@ -180,6 +183,25 @@ class Registry:
             await session.commit()
         self.catalog.remove(slug)
         return slug
+
+    async def set_policy(self, state: UpstreamState, tool_name: str, min_role: str | None, by: uuid.UUID) -> None:
+        """Override a tool's minimum role, or remove the override (None) to fall back to the annotation default."""
+        async with self.db.session() as session:
+            row = await session.scalar(
+                select(ToolPolicy).where(ToolPolicy.server_id == state.id, ToolPolicy.tool_name == tool_name)
+            )
+            if min_role is None:
+                if row is not None:
+                    await session.delete(row)
+            elif row is None:
+                session.add(ToolPolicy(server_id=state.id, tool_name=tool_name, min_role=min_role, updated_by=by))
+            else:
+                row.min_role, row.updated_by, row.updated_at = min_role, by, utcnow()
+            await session.commit()
+        if min_role is None:
+            self.catalog.policies.pop((state.slug, tool_name), None)
+        else:
+            self.catalog.policies[(state.slug, tool_name)] = min_role
 
     async def persist_health(self, state: UpstreamState) -> None:
         async with self.db.session() as session:
