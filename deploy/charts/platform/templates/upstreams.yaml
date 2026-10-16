@@ -53,6 +53,10 @@ spec:
           ports:
             - name: http
               containerPort: 8000
+          # Keep serving while the Service stops routing here, so rolling updates don't drop calls.
+          lifecycle:
+            preStop:
+              sleep: { seconds: {{ $.Values.global.preStopSleepSeconds }} }
           readinessProbe:
             httpGet: { path: /healthz, port: http }
             periodSeconds: 10

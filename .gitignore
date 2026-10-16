@@ -25,3 +25,7 @@ deploy/charts/*/charts/
 .idea/
 .DS_Store
 Thumbs.db
+
+# Personal notes (kept local)
+docs/build-log.md
+docs/project-journal.md

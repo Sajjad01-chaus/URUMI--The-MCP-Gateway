@@ -1,4 +1,6 @@
 global:
+  # Seconds a stopping pod keeps serving before shutdown (lets endpoint removal propagate).
+  preStopSleepSeconds: 5
   domain: 127-0-0-1.nip.io
   tls:
     enabled: false

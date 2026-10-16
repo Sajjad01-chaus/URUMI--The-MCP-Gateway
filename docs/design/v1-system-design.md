@@ -812,7 +812,7 @@ The gateway advertises `tools.listChanged: true`. When the effective catalog cha
 `store-main`:
 - default deny all ingress
 - `mysql` ← `wordpress`, `store-bootstrap`
-- `wordpress` ← Traefik (`kube-system`), `woo-mcp`, `store-bootstrap`
+- `wordpress` ← Traefik (`kube-system`), `woo-mcp` (the bootstrap Job uses WP-CLI on the shared volume + MySQL, so it gets no HTTP access)
 - `woo-mcp` ← **only** pods `app=gateway` in namespace `platform` on :8000
 
 `platform`:

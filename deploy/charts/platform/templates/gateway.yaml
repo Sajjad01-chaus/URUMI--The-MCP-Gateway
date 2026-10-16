@@ -122,6 +122,10 @@ spec:
             httpGet: { path: /healthz, port: http }
             periodSeconds: 15
             timeoutSeconds: 5
+          # Keep serving while the Service stops routing here, so rolling updates don't drop calls.
+          lifecycle:
+            preStop:
+              sleep: { seconds: {{ .Values.global.preStopSleepSeconds }} }
           readinessProbe:
             httpGet: { path: /readyz, port: http }
             periodSeconds: 10
