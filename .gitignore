@@ -29,3 +29,8 @@ Thumbs.db
 # Personal notes (kept local)
 docs/build-log.md
 docs/project-journal.md
+
+# AI tool files (kept local)
+.claude/
+CLAUDE.md
+AGENTS.md
