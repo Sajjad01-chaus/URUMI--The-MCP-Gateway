@@ -27,7 +27,7 @@ This guide takes the system that runs locally on k3d and runs it on a public Azu
 | Secrets | `deploy/secrets/local.secrets.yaml` | `deploy/secrets/prod.secrets.yaml`, generated **on the VM**, `chmod 600` |
 | Charts | same | same |
 
-Who does what: you do everything tied to your accounts (Azure, DuckDNS, GitHub) and run the commands; Claude writes the files marked **[Claude prepares]** and checks each step's output with you.
+Items marked **[to add]** are repo files that are created in this phase.
 
 Rough time: 3–4 hours, most of it waiting for installs and image builds.
 
@@ -53,7 +53,7 @@ Why public is safe: secrets are gitignored and generated per environment; the re
 
 ## Part 2 — Images on GHCR
 
-### 2.1 [Claude prepares] `.github/workflows/images.yml`
+### 2.1 [to add] `.github/workflows/images.yml`
 On every push to `main` it builds the 5 images (`gateway`, `dashboard`, `woo-mcp`, `notes-mcp`, `fx-mcp`) for `linux/amd64` and pushes them as
 `ghcr.io/<github-user>/urumi-<service>:<git-sha>` and `:latest`, using the built-in `GITHUB_TOKEN` (no personal token needed).
 
@@ -168,11 +168,11 @@ helm search repo jetstack/cert-manager
 helm upgrade --install cert-manager jetstack/cert-manager -n cert-manager --create-namespace \
   --version <version shown above> --set crds.enabled=true --wait
 ```
-**[Claude prepares]** `deploy/prod/cluster-issuers.yaml`: two ClusterIssuers, `letsencrypt-staging` and `letsencrypt-prod`, HTTP-01 solver with ingress class `traefik`. Apply with `kubectl apply -f`.
+**[to add]** `deploy/prod/cluster-issuers.yaml`: two ClusterIssuers, `letsencrypt-staging` and `letsencrypt-prod`, HTTP-01 solver with ingress class `traefik`. Apply with `kubectl apply -f`.
 
 How HTTP-01 works: cert-manager sees our Ingress annotation, asks Let's Encrypt for a certificate, and Let's Encrypt fetches a token at `http://<host>/.well-known/acme-challenge/...`. cert-manager answers through a short-lived **solver pod** in the Ingress's namespace.
 
-**Gotcha:** our namespaces are default-deny ingress (design §9.3), so Traefik could not reach the solver pod and the certificate would never be issued. **[Claude prepares]** a NetworkPolicy in both charts that lets Traefik reach pods labelled `acme.cert-manager.io/http01-solver: "true"` on :8089, and nothing else. `netpol-test.sh` gets the matching rows.
+**Gotcha:** our namespaces are default-deny ingress (design §9.3), so Traefik could not reach the solver pod and the certificate would never be issued. **[to add]** a NetworkPolicy in both charts that lets Traefik reach pods labelled `acme.cert-manager.io/http01-solver: "true"` on :8089, and nothing else. `netpol-test.sh` gets the matching rows.
 
 Use **staging first**: Let's Encrypt production allows only a few duplicate certificates per week. Repeated failed attempts can lock us out for days, staging cannot.
 
@@ -188,7 +188,7 @@ nano deploy/secrets/prod.secrets.yaml   # replace REPLACE_WITH_YOUR_GROQ_KEY in 
 ```
 Secrets are generated **on the VM** and never leave it (design §10.3). Never regenerate them for a running cluster: MySQL and Postgres keep the old passwords.
 
-**[Claude prepares]**
+**[to add]**
 - `deploy/values/*/values-prod.yaml`: your DuckDNS domain, GHCR image names.
 - `scripts/deploy-prod.sh <tag>`: both `helm upgrade --install` commands with `values-prod.yaml`, the prod secrets and the image tag, then waits and prints URLs. Same logic as `up.sh` minus k3d and image import.
 
@@ -207,7 +207,7 @@ bash scripts/deploy-prod.sh <git-sha>
 
 ## Part 8 — Verify (the Phase 8 gate)
 
-**[Claude prepares]** the acceptance script takes `--scheme https` and `--secrets deploy/secrets/prod.secrets.yaml` (it currently assumes `http://` and the local secrets file).
+**[to add]** the acceptance script takes `--scheme https` and `--secrets deploy/secrets/prod.secrets.yaml` (it currently assumes `http://` and the local secrets file).
 
 On the VM:
 ```bash
