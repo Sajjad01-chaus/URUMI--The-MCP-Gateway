@@ -84,19 +84,22 @@ Press Enter for an empty passphrase, or set one. This creates `~/.ssh/urumi_azur
 | Subscription | Azure for Students | your credit |
 | Resource group | new: `urumi-rg` | delete this one group later to remove everything |
 | VM name | `urumi-prod` | |
-| Region | one close to you that your student subscription allows (e.g. Central India) | latency; student subscriptions block some regions |
+| Region | **Central India** (must be on your subscription's allowed list, see note below) | latency; Azure for Students only allows a few regions |
 | Image | **Ubuntu Server 24.04 LTS – x64 Gen2** | design §1; matches our `linux/amd64` images |
-| Size | **Standard_B2ms** (2 vCPU, 8 GB) | the stack needs ~4 GB limits; 4 GB VMs are too tight. If "not available": try another region, or `Standard_B2as_v2` (also 2 vCPU / 8 GB) |
+| Availability options | **No infrastructure redundancy required** | one VM; a pinned zone can run out of capacity |
+| Size | **Standard_B2as_v2** (2 vCPU, 8 GiB, x64, ~$0.049/h) | the stack needs ~4 GB limits; 4 GB VMs are too tight. Alternatives: B2s_v2, B2ms. **Never a `p` size (B2ps_v2 = Arm)**: our images are amd64 |
 | Authentication | **SSH public key**, user `azureuser`, "Use existing public key" → paste the content of `urumi_azure.pub` | no password login at all |
-| Inbound ports | SSH (22) for now | 80/443 are added in 3.3 |
+| Inbound ports | SSH (22), HTTP (80), HTTPS (443) | 22 is narrowed to your IP in 3.3 |
 | OS disk | 64 GB **Standard SSD** | images + MySQL/WordPress/Postgres volumes; HDD makes MySQL slow |
-| Networking → Public IP | create new, **SKU Standard, assignment Static** | a dynamic IP changes after a stop, which would break DNS and HTTPS |
+| Networking → Public IP | new (default: Standard SKU, static) | a dynamic IP changes after a stop, which would break DNS and HTTPS |
 | Management → Auto-shutdown | optional, e.g. 23:30 your time | saves credit; the static IP survives |
 
 **Review + create** → wait for "deployment complete" → note the **public IP**.
 
+**Student subscription traps (seen 2026-10-16):** `NotAvailableForSubscription` on a size means that size is blocked *in the selected region*; select the region first, then the size. `RequestDisallowedByAzure … best available regions` means the region is not on your subscription's list: portal → **Policy → Assignments → "Allowed resource deployment regions" → Parameters** (ours: uaenorth, eastasia, koreacentral, malaysiawest, centralindia). The size picker does not check this policy. A "Deployment recommendations" pop-up suggesting another region is only a capacity hint; Central India deployed fine at half the price of the suggestion.
+
 ### 3.3 Firewall (Network security group)
-VM → **Networking → Add inbound port rule**:
+VM → **Networking → Network settings** → edit the rules:
 | Port | Source | Why |
 |---|---|---|
 | 22 | **My IP address** (not Any) | only you can SSH in |
@@ -105,15 +108,17 @@ VM → **Networking → Add inbound port rule**:
 
 **Do not** open 6443 (Kubernetes API): we run `kubectl`/`helm` on the VM over SSH.
 
+Home/mobile IPs change (ours changed overnight): if `ssh` says **Connection timed out**, open the SSH rule, switch Source to Any and back to **My IP address** (refreshes the IP), Save.
+
 ### 3.4 Log in
 ```bash
-ssh -i ~/.ssh/urumi_azure azureuser@<public-ip>
+ssh -i $HOME\.ssh\urumi_azure azureuser@<public-ip>   # PowerShell on the laptop
 ```
 First time it asks to trust the host key: type `yes`. **Check:** prompt `azureuser@urumi-prod:~$`.
 
 Then update the OS:
 ```bash
-sudo apt update && sudo apt -y upgrade && sudo reboot
+sudo apt update && sudo NEEDRESTART_MODE=a apt-get -y full-upgrade && sudo reboot
 ```
 
 ---
@@ -124,7 +129,7 @@ sudo apt update && sudo apt -y upgrade && sudo reboot
 2. DuckDNS answers for every subdomain too, so `store.`, `app.` and `mcp.urumi-sajjad.duckdns.org` all point to the VM.
 3. **Check** from the laptop:
    ```bash
-   nslookup app.urumi-sajjad.duckdns.org
+   Resolve-DnsName app.urumi-sajjad.duckdns.org -Type A   # PowerShell
    ```
    must show the VM's IP.
 
@@ -133,25 +138,28 @@ sudo apt update && sudo apt -y upgrade && sudo reboot
 ## Part 5 — k3s on the VM
 
 ```bash
-curl -sfL https://get.k3s.io | sh -
+curl -sfL https://get.k3s.io | INSTALL_K3S_VERSION="v1.35.5+k3s1" sh -
 ```
-What it does: installs k3s as a systemd service, with Traefik (ingress on host ports 80/443), CoreDNS, local-path storage, metrics-server and the built-in NetworkPolicy controller: the same components as k3d locally.
+Pinned to the same version as the local k3d node (`deploy/k3d/cluster.yaml`). What it does: verifies the download (sha256), installs k3s as a systemd service, with Traefik (ingress on host ports 80/443), CoreDNS, local-path storage, metrics-server and the built-in NetworkPolicy controller: the same components as k3d locally.
 
 Let your user run `kubectl` without sudo (copying the file is safer than making it world-readable):
 ```bash
 mkdir -p ~/.kube && sudo cp /etc/rancher/k3s/k3s.yaml ~/.kube/config && sudo chown $USER: ~/.kube/config && chmod 600 ~/.kube/config
+echo 'export KUBECONFIG=$HOME/.kube/config' >> ~/.bashrc && source ~/.bashrc
 ```
+The `KUBECONFIG` line is required: k3s's built-in `kubectl` otherwise reads the root-only `/etc/rancher/k3s/k3s.yaml` ("permission denied").
 Check:
 ```bash
-kubectl get nodes
+kubectl get nodes -o wide
 kubectl -n kube-system get pods
 ```
-Good: node `Ready`; coredns, traefik, local-path-provisioner, metrics-server `Running`; `helm-install-traefik*` `Completed`.
+Good: node `Ready`, `v1.35.5+k3s1`; coredns, traefik, local-path-provisioner, metrics-server `Running`; `helm-install-traefik*` `Completed`.
 
-Install Helm:
+Install Helm, same version as the laptop (v4.3.0), checksum-verified:
 ```bash
-curl -fsSL https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash && helm version
+cd /tmp && curl -fsSLO https://get.helm.sh/helm-v4.3.0-linux-amd64.tar.gz && curl -fsSLO https://get.helm.sh/helm-v4.3.0-linux-amd64.tar.gz.sha256sum && sha256sum -c helm-v4.3.0-linux-amd64.tar.gz.sha256sum && tar -xzf helm-v4.3.0-linux-amd64.tar.gz && sudo install -m 0755 linux-amd64/helm /usr/local/bin/helm && cd ~ && helm version
 ```
+`helm list -A` already shows `traefik` and `traefik-crd`: k3s installs Traefik as a Helm chart itself.
 
 Also install the tools for secrets and the acceptance run:
 ```bash
@@ -163,10 +171,10 @@ sudo apt -y install git python3 && curl -LsSf https://astral.sh/uv/install.sh | 
 ## Part 6 — HTTPS with cert-manager
 
 ```bash
-helm repo add jetstack https://charts.jetstack.io && helm repo update
-helm search repo jetstack/cert-manager
+helm repo add jetstack https://charts.jetstack.io --force-update && helm repo update
 helm upgrade --install cert-manager jetstack/cert-manager -n cert-manager --create-namespace \
-  --version <version shown above> --set crds.enabled=true --wait
+  --version v1.21.2 --set crds.enabled=true --wait --timeout 5m
+kubectl -n cert-manager get pods   # cert-manager, -cainjector, -webhook Running
 ```
 **[to add]** `deploy/prod/cluster-issuers.yaml`: two ClusterIssuers, `letsencrypt-staging` and `letsencrypt-prod`, HTTP-01 solver with ingress class `traefik`. Apply with `kubectl apply -f`.
 
