@@ -1,10 +1,12 @@
 #!/usr/bin/env bash
 # Phase 7 acceptance: the §15 demo script (scripts/acceptance.py) + step 14 isolation (scripts/netpol-test.sh).
-# Usage: scripts/acceptance.sh [domain]
+# Usage: scripts/acceptance.sh [domain] [--prod]   (--prod: HTTPS + deploy/secrets/prod.*, run on the VM)
 set -uo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 DOMAIN="${1:-127-0-0-1.nip.io}"
+export URUMI_ENV=local
+[[ "${2:-}" == "--prod" ]] && URUMI_ENV=prod
 export PYTHONIOENCODING=utf-8
 
 uv run --quiet --frozen --project "$ROOT/services/gateway" python "$ROOT/scripts/acceptance.py" "$DOMAIN"

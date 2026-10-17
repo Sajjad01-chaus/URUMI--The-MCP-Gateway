@@ -1,5 +1,5 @@
 global:
-  domain: CHANGE-ME.duckdns.org
+  domain: urumi-sajjad.duckdns.org
   tls:
     enabled: true
     clusterIssuer: letsencrypt-prod
@@ -17,6 +17,3 @@ wordpress:
   resources:
     requests: { cpu: 200m, memory: 256Mi }
     limits: { cpu: "1", memory: 768Mi }
-
-bootstrap:
-  sampleProducts: false

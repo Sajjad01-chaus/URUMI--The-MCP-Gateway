@@ -1,5 +1,5 @@
 global:
-  domain: CHANGE-ME.duckdns.org
+  domain: urumi-sajjad.duckdns.org
   tls:
     enabled: true
     clusterIssuer: letsencrypt-prod

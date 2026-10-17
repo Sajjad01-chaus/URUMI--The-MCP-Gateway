@@ -6,6 +6,7 @@ set -euo pipefail
 export MSYS_NO_PATHCONV=1
 
 DOMAIN="${1:-127-0-0-1.nip.io}"
+SCHEME=$([[ "${URUMI_ENV:-local}" == prod ]] && echo https || echo http)
 PLATFORM_NS=platform
 STORE_NS=store-main
 IMAGE=busybox:1.37
@@ -73,10 +74,10 @@ probe "$PLATFORM_NS" np-gateway postgres 5432 allowed
 probe "$PLATFORM_NS" np-gateway api.groq.com 443 allowed
 probe "$STORE_NS" np-woo wordpress 80 allowed
 probe "$STORE_NS" np-bootstrap mysql 3306 allowed
-via_ingress "http://store.$DOMAIN/wp-login.php" 200 "Traefik -> wordpress"
-via_ingress "http://app.$DOMAIN/healthz" 200 "Traefik -> dashboard"
-via_ingress "http://app.$DOMAIN/api/auth/me" 401 "Traefik -> gateway (/api)"
-via_ingress "http://mcp.$DOMAIN/mcp" 401 "Traefik -> gateway (/mcp)"
+via_ingress "$SCHEME://store.$DOMAIN/wp-login.php" 200 "Traefik -> wordpress"
+via_ingress "$SCHEME://app.$DOMAIN/healthz" 200 "Traefik -> dashboard"
+via_ingress "$SCHEME://app.$DOMAIN/api/auth/me" 401 "Traefik -> gateway (/api)"
+via_ingress "$SCHEME://mcp.$DOMAIN/mcp" 401 "Traefik -> gateway (/mcp)"
 echo
 
 echo "== Denied paths"

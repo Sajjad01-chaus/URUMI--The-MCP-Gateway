@@ -9,6 +9,7 @@ Usage: uv run --project services/gateway python scripts/acceptance.py [domain]
 
 import asyncio
 import json
+import os
 import re
 import secrets
 import subprocess
@@ -25,10 +26,13 @@ from mcp import Client, types
 from mcp.client.streamable_http import streamable_http_client
 
 ROOT = Path(__file__).resolve().parent.parent
-SECRETS = ROOT / "deploy" / "secrets" / "local.secrets.yaml"
-DEMO_USERS = ROOT / "deploy" / "secrets" / "local.demo-users.yaml"
+# URUMI_ENV=prod (set by acceptance.sh --prod) switches to HTTPS and the prod secrets on the VM.
+ENV = os.environ.get("URUMI_ENV", "local")
+SECRETS = ROOT / "deploy" / "secrets" / f"{ENV}.secrets.yaml"
+DEMO_USERS = ROOT / "deploy" / "secrets" / f"{ENV}.demo-users.yaml"
 DOMAIN = sys.argv[1] if len(sys.argv) > 1 else "127-0-0-1.nip.io"
-APP, MCP_URL, STORE = f"http://app.{DOMAIN}", f"http://mcp.{DOMAIN}/mcp", f"http://store.{DOMAIN}"
+SCHEME = "https" if ENV == "prod" else "http"
+APP, MCP_URL, STORE = f"{SCHEME}://app.{DOMAIN}", f"{SCHEME}://mcp.{DOMAIN}/mcp", f"{SCHEME}://store.{DOMAIN}"
 ALICE, BOB = "alice@urumi.test", "bob@urumi.test"
 XRW = {"X-Requested-With": "acceptance"}
 PRODUCT = "Urumi Mug"
