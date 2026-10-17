@@ -13,7 +13,7 @@ uv run --quiet --frozen --project "$ROOT/services/gateway" python "$ROOT/scripts
 demo=$?
 echo
 echo "=== 14 isolation: scripts/netpol-test.sh"
-"$ROOT/scripts/netpol-test.sh" "$DOMAIN"
+bash "$ROOT/scripts/netpol-test.sh" "$DOMAIN"
 netpol=$?
 
 echo
