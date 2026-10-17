@@ -189,38 +189,58 @@ Use **staging first**: Let's Encrypt production allows only a few duplicate cert
 ## Part 7 — Deploy the charts
 
 ```bash
-git clone https://github.com/<github-user>/urumi-mcp-gateway.git && cd urumi-mcp-gateway
-python3 scripts/gen_secrets.py prod
-chmod 600 deploy/secrets/prod.secrets.yaml
-nano deploy/secrets/prod.secrets.yaml   # replace REPLACE_WITH_YOUR_GROQ_KEY in groqApiKey, save
+git clone https://github.com/Sajjad01-chaus/URUMI--The-MCP-Gateway.git ~/urumi && cd ~/urumi
+python3 scripts/gen_secrets.py prod && chmod 600 deploy/secrets/prod.secrets.yaml
 ```
-Secrets are generated **on the VM** and never leave it (design §10.3). Never regenerate them for a running cluster: MySQL and Postgres keep the old passwords.
+Secrets are generated **on the VM** and never leave it (design §10.3). **Never regenerate them (`--force`) once deployed**: MySQL and Postgres keep the first passwords.
 
-**[to add]**
-- `deploy/values/*/values-prod.yaml`: your DuckDNS domain, GHCR image names.
-- `scripts/deploy-prod.sh <tag>`: both `helm upgrade --install` commands with `values-prod.yaml`, the prod secrets and the image tag, then waits and prints URLs. Same logic as `up.sh` minus k3d and image import.
+Insert the Groq key without showing any secret on screen (do not open the file in an editor and never screenshot it). The prompt is silent and rejects anything that isn't a Groq key:
+```bash
+python3 - <<'EOF'
+import getpass, re, pathlib
+p = pathlib.Path("deploy/secrets/prod.secrets.yaml")
+key = re.sub(r"\x1b\[[0-9;]*~", "", getpass.getpass("Paste Groq key, then Enter: ")).strip()
+if not re.fullmatch(r"gsk_[A-Za-z0-9]{20,}", key):
+    raise SystemExit(f"not a Groq key (length {len(key)}); file unchanged")
+text, n = re.subn(r'(?m)^  groqApiKey: ".*"$', f'  groqApiKey: "{key}"', p.read_text())
+if n != 1:
+    raise SystemExit("groqApiKey line not found; file unchanged")
+p.write_text(text)
+print(f"groqApiKey set (length {len(key)})")
+EOF
+```
+
+`scripts/deploy-prod.sh <image-sha> [--issuer …]` checks the prerequisites (secrets file `600` with the key set, domain set, cert-manager present, all 5 GHCR images pullable), applies the two ClusterIssuers (`deploy/prod/cluster-issuers.yaml`), then runs both `helm upgrade --install` with `values-prod.yaml`, the prod secrets and the GHCR images. `<image-sha>` is the commit the **images** workflow built (Actions → images → run), not necessarily the latest commit.
 
 First deploy with the staging issuer:
 ```bash
-bash scripts/deploy-prod.sh <git-sha> --issuer letsencrypt-staging
+bash scripts/deploy-prod.sh <image-sha> --issuer letsencrypt-staging
 kubectl get certificate -A
 ```
-Good: 2 certificates `READY True` within ~2 min (the browser still warns: staging certs are intentionally untrusted). Then the real one:
+Good: 2 certificates `READY True` within ~2 min (the browser still warns: staging certs are intentionally untrusted). Then the real one (same command, default issuer `letsencrypt-prod`); cert-manager re-issues by itself because the issuer changed:
 ```bash
-bash scripts/deploy-prod.sh <git-sha>
+bash scripts/deploy-prod.sh <image-sha>
+kubectl get secret -n platform platform-tls -o jsonpath='{.metadata.annotations.cert-manager\.io/issuer-name}{"\n"}'   # letsencrypt-prod
 ```
+Don't delete the TLS secrets without a reason: each fresh certificate counts toward Let's Encrypt's 5-duplicates-per-week limit (renewals don't).
+
 **Check:** `https://store.<domain>`, `https://app.<domain>` open with a padlock; `https://mcp.<domain>/mcp` without a key → 401.
 
 ---
 
 ## Part 8 — Verify (the Phase 8 gate)
 
-**[to add]** the acceptance script takes `--scheme https` and `--secrets deploy/secrets/prod.secrets.yaml` (it currently assumes `http://` and the local secrets file).
-
-On the VM:
+On the VM (needs `uv`: `curl -LsSf https://astral.sh/uv/install.sh | sh && source ~/.local/bin/env`):
 ```bash
-bash scripts/acceptance.sh urumi-sajjad.duckdns.org --scheme https
+cd ~/urumi && bash scripts/acceptance.sh urumi-sajjad.duckdns.org --prod
 ```
+`--prod` = HTTPS + `deploy/secrets/prod.*`. It runs the §15 demo script (59 checks), then `netpol-test.sh` (28 paths). On a flaky connection run the isolation part detached so an SSH drop can't kill it:
+```bash
+URUMI_ENV=prod nohup bash scripts/netpol-test.sh urumi-sajjad.duckdns.org > ~/netpol.log 2>&1 &
+tail -f ~/netpol.log
+```
+Result on 2026-10-17: **59/59** and **28/28**.
+
 Plus by hand, from the laptop: storefront purchase in the browser, dashboard login, and Claude Code as bob:
 ```bash
 claude mcp add --transport http urumi-prod https://mcp.urumi-sajjad.duckdns.org/mcp --header "Authorization: Bearer mcpgw_..."
