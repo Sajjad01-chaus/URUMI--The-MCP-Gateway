@@ -1,6 +1,6 @@
 # Urumi MCP Gateway — v1 System Design
 
-> Status: **v1.1 (pre-implementation)**, revised 2026-10-12 after design review: SSRF guard, tool permissions, verified NetworkPolicies, SDK spike, no-retry rule, non-streaming chat. **Deadline: 2026-10-22.**
+> Status: **v1 implemented and deployed** (2026-10-17): all phase gates 0–8 passed; production at `*.urumi-sajjad.duckdns.org`. Design revised 2026-10-12 after review (SSRF guard, tool permissions, verified NetworkPolicies, SDK spike, no-retry rule, non-streaming chat). Deviations found during the build are listed in [system-design-and-tradeoffs.md](../system-design-and-tradeoffs.md) §4. **Deadline: 2026-10-22.**
 > This document is the single source of truth for what we build first.
 > Anything marked **[v2]** is deliberately postponed until the core definition-of-done works end to end.
 
