@@ -75,5 +75,25 @@ spec:
         - name: tmp
           emptyDir: {}
         - name: data
+          {{- if eq $u.name "notes-mcp" }}
+          persistentVolumeClaim: { claimName: notes-mcp-data }
+          {{- else }}
           emptyDir: {}
+          {{- end }}
 {{- end }}
+---
+# Notes survive pod restarts (single node: old and new pod can share the RWO volume during a rollout).
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: notes-mcp-data
+  labels: {{- include "platform.labels" . | nindent 4 }}
+    app.kubernetes.io/name: notes-mcp
+spec:
+  accessModes: ["ReadWriteOnce"]
+  {{- with .Values.notesMcp.storage.className }}
+  storageClassName: {{ . }}
+  {{- end }}
+  resources:
+    requests:
+      storage: {{ .Values.notesMcp.storage.size }}

@@ -10,6 +10,7 @@ from cryptography.fernet import Fernet
 from mcp import Client, types
 from mcp.client.streamable_http import streamable_http_client
 from mcp.server.mcpserver import MCPServer
+from mcp.shared.exceptions import MCPError
 from sqlalchemy import select
 
 from gateway.config import Settings
@@ -55,6 +56,11 @@ def make_notes() -> MCPServer:
         """Takes too long."""
         await asyncio.sleep(5)
         return "late"
+
+    @server.tool(annotations=READ)
+    def big() -> str:
+        """Returns more than the gateway's size cap."""
+        return "x" * 300_000
 
     return server
 
@@ -135,7 +141,7 @@ async def audit_rows(gw: Gateway) -> list[AuditLog]:
 
 async def test_aggregates_both_servers_with_prefixes_and_role_filtering(gw):
     async with mcp(gw, gw.admin_key) as admin:
-        assert await names(admin) == {"woo__list_orders", "woo__create_product", "woo__search", "notes__search", "notes__slow"}
+        assert await names(admin) == {"woo__list_orders", "woo__create_product", "woo__search", "notes__search", "notes__slow", "notes__big"}
     async with mcp(gw, gw.member_key, mode="legacy") as member:
         assert "woo__create_product" not in await names(member)
         assert {"woo__search", "notes__search"} <= await names(member)
@@ -170,7 +176,7 @@ async def test_missing_bad_and_revoked_keys_are_rejected(gw):
             for key in (await session.scalars(select(ApiKey))).all():
                 key.revoked_at = utcnow()
             await session.commit()
-        with pytest.raises(Exception):
+        with pytest.raises(MCPError):
             await client.call_tool("woo__list_orders", {})
 
 
@@ -186,6 +192,15 @@ async def test_slow_upstream_times_out_without_blocking_others(gw):
     assert slow_result.is_error and "did not answer within 1s" in slow_result.content[0].text
     outcomes = {(r.exposed_name, r.outcome) for r in await audit_rows(gw)}
     assert ("notes__slow", "timeout") in outcomes and ("woo__list_orders", "success") in outcomes
+
+
+async def test_oversized_result_is_replaced_by_an_error(gw):
+    async with mcp(gw, gw.admin_key) as client:
+        result = await client.call_tool("notes__big", {})
+        assert not (await client.call_tool("woo__list_orders", {})).is_error
+    assert result.is_error and "result too large" in result.content[0].text
+    rows = [r for r in await audit_rows(gw) if r.exposed_name == "notes__big"]
+    assert rows and rows[-1].outcome == "error" and "too large" in rows[-1].error_message
 
 
 async def test_dead_upstream_is_marked_unreachable_and_others_keep_working(gw):

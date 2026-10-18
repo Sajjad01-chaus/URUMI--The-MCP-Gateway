@@ -6,13 +6,13 @@ import httpx2
 import pytest
 from pydantic import ValidationError
 from sqlalchemy import select
+from test_gateway_e2e import audit_rows, gw, mcp, names  # noqa: F401  (gw is a fixture)
+from test_team import XRW, logged_in
 
 from gateway.chat import LLMError, MalformedToolCall, OpenAICompatibleLLM, compact_schema
 from gateway.config import Settings
 from gateway.models import User
 from gateway.sessions import issue_token
-from test_gateway_e2e import audit_rows, gw, mcp, names  # noqa: F401  (gw is a fixture)
-from test_team import XRW, logged_in
 
 
 def tool_call(name: str, arguments: Any, call_id: str = "call_1") -> dict:

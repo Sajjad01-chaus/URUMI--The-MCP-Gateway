@@ -1,0 +1,75 @@
+# Lint and test on every push and pull request: ruff, pytest per Python service, dashboard build, helm lint.
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+      - name: ruff
+        run: uvx ruff@0.17.1 check .
+
+  python:
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        service: [gateway, woo-mcp, notes-mcp, fx-mcp]
+    defaults:
+      run:
+        working-directory: services/${{ matrix.service }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.12"
+      - name: Install (locked)
+        run: uv sync --locked
+      - name: pytest
+        run: uv run pytest -q
+
+  dashboard:
+    runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: services/dashboard
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: services/dashboard/package-lock.json
+      - run: npm ci
+      - name: Typecheck + build
+        run: npm run build
+
+  helm:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: azure/setup-helm@v4
+        with:
+          version: v4.3.0
+      # Placeholder secrets satisfy the charts' `required` checks; real values never exist in CI.
+      - name: Lint charts with local and prod values
+        run: |
+          for chart in platform woo-store; do
+            for env in local prod; do
+              helm lint "deploy/charts/$chart" -f "deploy/values/$chart/values-$env.yaml" -f deploy/secrets/secrets.example.yaml
+            done
+          done

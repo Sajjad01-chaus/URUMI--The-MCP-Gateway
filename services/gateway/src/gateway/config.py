@@ -1,7 +1,7 @@
 import json
 from functools import lru_cache
 
-from pydantic import BaseModel, field_validator
+from pydantic import BaseModel, Field, field_validator
 from pydantic_settings import BaseSettings
 
 
@@ -18,8 +18,8 @@ class SeedServer(BaseModel):
     tool_policies: dict[str, str] = {}
 
 
-DEV_SESSION_SECRET = "dev-only-session-secret-change-me-0000"
-DEV_CHAT_SECRET = "dev-only-chat-token-secret-change-me-00"
+DEV_SESSION_SECRET = "dev-only-session-secret-change-me-0000"  # noqa: S105 - local-dev placeholder; startup warns when used
+DEV_CHAT_SECRET = "dev-only-chat-token-secret-change-me-00"  # noqa: S105 - local-dev placeholder; startup warns when used
 MIN_SECRET_LENGTH = 32
 
 
@@ -57,6 +57,7 @@ class Settings(BaseSettings):
     unreachable_after_failures: int = 2
     max_concurrent_calls_per_upstream: int = 10
     default_call_timeout_seconds: int = 20
+    max_result_bytes: int = Field(default=256 * 1024, ge=1024)
 
     @field_validator("session_secret", "chat_token_secret")
     @classmethod

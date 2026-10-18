@@ -69,6 +69,5 @@ The first upstream is `woo-mcp`, our MCP server for a WooCommerce store running 
 
 - **Availability:** single node and single gateway replica; the VM is a single point of failure. Next: shared session store and catalog so the gateway can scale out.
 - **Backups:** database data lives on the VM disk; backups are documented, not automated.
-- **notes-mcp** keeps notes in an `emptyDir` (demo upstream, data resets on restart).
-- **Upstream response size** is not yet capped (design §9.4 planned it).
+- **Upstream response size** is capped after decoding (256 KiB, `gateway.maxResultBytes`); the read itself is bounded only by the timeout and the pod memory limit.
 - **Backlog:** chat streaming, persisted conversations, Prometheus metrics, multi-store provisioning (`helm install woo-store -n store-<id>` + auto-registration), default-deny egress for every workload.

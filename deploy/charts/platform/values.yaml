@@ -26,6 +26,8 @@ gateway:
   imagePullPolicy: IfNotPresent
   healthIntervalSeconds: 15
   defaultCallTimeoutSeconds: 20
+  # Larger upstream tool results are replaced by an error (protects clients and the model's context).
+  maxResultBytes: 262144
   # SSRF guard: private addresses are allowed only for these host patterns.
   allowedInternalHosts: "*.store-*.svc.cluster.local,*-mcp.platform.svc.cluster.local"
   # Egress NetworkPolicy: namespaces whose MCP pods the gateway may call on :8000.
@@ -71,6 +73,9 @@ notesMcp:
   image: urumi/notes-mcp:dev
   imagePullPolicy: IfNotPresent
   faultDelayMs: "0"
+  storage:
+    size: 256Mi
+    className: ""
   # Small request, generous CPU limit: a 250m limit throttled short Python bursts into multi-second tool calls.
   resources:
     requests: { cpu: 20m, memory: 64Mi }

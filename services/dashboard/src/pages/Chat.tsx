@@ -171,13 +171,52 @@ function ToolCallChip({ call }: { call: ChatToolCall }) {
 }
 
 /**
- * Minimal Markdown for model answers: ```code blocks```, **bold** and `code`.
+ * Minimal Markdown for model answers: ```code blocks```, | tables |, **bold** and `code`.
  * Builds React elements (never innerHTML), so text from tools can't inject HTML or scripts.
  */
 function renderLite(text: string): ReactNode[] {
   return text.split(/```(?:[a-z]*\n)?([\s\S]*?)```/g).map((part, i) =>
-    i % 2 === 1 ? <pre key={i} className="answer-code">{part.replace(/\n$/, "")}</pre> : <span key={i}>{inline(part)}</span>,
+    i % 2 === 1 ? <pre key={i} className="answer-code">{part.replace(/\n$/, "")}</pre> : <span key={i}>{withTables(part)}</span>,
   );
+}
+
+const TABLE_SEPARATOR = /^\s*\|?\s*:?-{3,}:?\s*(\|\s*:?-{3,}:?\s*)*\|?\s*$/;
+
+function cells(line: string): string[] {
+  return line.trim().replace(/^\|/, "").replace(/\|$/, "").split("|").map((c) => c.trim());
+}
+
+// A table is a header row, a |---| separator row, then rows starting with "|"; everything else stays text.
+function withTables(text: string): ReactNode[] {
+  const lines = text.split("\n");
+  const out: ReactNode[] = [];
+  let buffer: string[] = [];
+  const flush = () => {
+    if (buffer.length) out.push(<span key={out.length}>{inline(buffer.join("\n"))}</span>);
+    buffer = [];
+  };
+  for (let i = 0; i < lines.length; i++) {
+    if (lines[i].trim().startsWith("|") && i + 1 < lines.length && TABLE_SEPARATOR.test(lines[i + 1])) {
+      const header = cells(lines[i]);
+      const rows: string[][] = [];
+      i += 2;
+      while (i < lines.length && lines[i].trim().startsWith("|")) rows.push(cells(lines[i++]));
+      i--;
+      flush();
+      out.push(
+        <div key={out.length} className="answer-table-wrap">
+          <table className="answer-table">
+            <thead><tr>{header.map((h, j) => <th key={j}>{inline(h)}</th>)}</tr></thead>
+            <tbody>{rows.map((r, k) => <tr key={k}>{header.map((_, j) => <td key={j}>{inline(r[j] ?? "")}</td>)}</tr>)}</tbody>
+          </table>
+        </div>,
+      );
+    } else {
+      buffer.push(lines[i]);
+    }
+  }
+  flush();
+  return out;
 }
 
 function inline(text: string): ReactNode[] {

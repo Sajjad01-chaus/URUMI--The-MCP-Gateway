@@ -5,7 +5,9 @@ from contextlib import asynccontextmanager
 import httpx2
 import pytest
 from cryptography.fernet import Fernet
+from mcp.shared.exceptions import MCPError
 from sqlalchemy import func, select, update
+from test_gateway_e2e import audit_rows, gw, mcp, names  # noqa: F401  (gw is a fixture)
 
 from gateway.catalog import Catalog
 from gateway.config import Settings
@@ -14,7 +16,6 @@ from gateway.models import ApiKey, Base, User, utcnow
 from gateway.registry import Registry
 from gateway.security import CredentialBox, hash_password
 from gateway.sessions import LoginThrottle
-from test_gateway_e2e import audit_rows, gw, mcp, names  # noqa: F401  (gw is a fixture)
 
 PASSWORD = "correct-horse-battery"
 XRW = {"X-Requested-With": "dashboard"}
@@ -115,7 +116,7 @@ async def test_revoked_key_gets_401_on_next_call_and_is_audited(gw):
         assert not (await client.call_tool("woo__list_orders", {})).is_error
         async with httpx2.AsyncClient(base_url=gw.url, headers={"Authorization": f"Bearer {gw.admin_key}"}) as admin:
             assert (await admin.delete(f"/api/keys/{bob_key_id}")).status_code == 204
-        with pytest.raises(Exception):
+        with pytest.raises(MCPError):
             await client.call_tool("woo__list_orders", {})
 
     call = {"jsonrpc": "2.0", "id": 7, "method": "tools/call", "params": {"name": "woo__list_orders", "arguments": {}}}

@@ -93,10 +93,10 @@ class ApiKeyMiddleware:
         self.expected = api_key.encode()
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
-        if scope["type"] == "http" and scope["path"] != "/healthz":
-            if not hmac.compare_digest(dict(scope["headers"]).get(b"x-api-key", b""), self.expected):
-                await JSONResponse({"error": "invalid or missing X-API-Key"}, status_code=401)(scope, receive, send)
-                return
+        presented = dict(scope["headers"]).get(b"x-api-key", b"") if scope["type"] == "http" else b""
+        if scope["type"] == "http" and scope["path"] != "/healthz" and not hmac.compare_digest(presented, self.expected):
+            await JSONResponse({"error": "invalid or missing X-API-Key"}, status_code=401)(scope, receive, send)
+            return
         await self.app(scope, receive, send)
 
 

@@ -214,3 +214,7 @@ input:focus, select:focus, textarea:focus, .button:focus-visible { outline: 2px 
 .chat-input textarea { resize: vertical; min-height: 44px; max-height: 200px; }
 .answer-code { margin: 6px 0; padding: 8px 10px; background: var(--surface); border: 1px solid var(--border); border-radius: 6px; white-space: pre-wrap; }
 .bubble code { background: var(--surface); padding: 1px 4px; border-radius: 4px; }
+.answer-table-wrap { overflow-x: auto; margin: 6px 0; white-space: normal; }
+.answer-table { border-collapse: collapse; font-size: 13px; background: var(--surface); }
+.answer-table th, .answer-table td { border: 1px solid var(--border); padding: 4px 8px; text-align: left; vertical-align: top; }
+.answer-table th { background: var(--surface-2); font-weight: 600; }

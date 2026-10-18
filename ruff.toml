@@ -1,0 +1,23 @@
+# One lint config for every Python service and script (CI: `uvx ruff@0.17.1 check .`).
+target-version = "py312"
+line-length = 130
+extend-exclude = ["spikes", "**/.venv", "**/node_modules"]
+
+[lint]
+select = ["E", "F", "W", "I", "B", "UP", "SIM", "ASYNC", "S"]
+ignore = [
+    "E501",   # long lines are allowed where splitting hurts readability (tables of values, SQL)
+    "S104",   # servers bind 0.0.0.0 on purpose: they run in containers behind a Service
+    "SIM117", # nested async context managers read clearer than one long `async with`
+]
+
+[lint.per-file-ignores]
+# FastAPI dependencies are declared as call defaults by design.
+"services/gateway/src/gateway/{api,team,chat,deps}.py" = ["B008"]
+# Tests: asserts, fixture arguments that shadow fixtures, fake secrets, and throwaway subprocess calls are expected.
+"**/tests/**" = ["S101", "S105", "S106", "S311", "F811", "ASYNC110"]
+# Operator scripts run fixed kubectl/helm commands from trusted arguments.
+"scripts/**" = ["S603", "S607", "S311"]
+
+[lint.isort]
+known-first-party = ["gateway", "woo_mcp", "notes_mcp", "fx_mcp"]

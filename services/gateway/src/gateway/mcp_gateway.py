@@ -38,7 +38,13 @@ def principal_of(ctx: Any) -> Principal:
     return principal
 
 
-def build_mcp_server(catalog: Catalog, hub: SessionHub, auditor: Auditor, box: CredentialBox, connector: Connector) -> GatewayServer:
+def result_size(result: types.CallToolResult) -> int:
+    return len(result.model_dump_json(by_alias=True, exclude_none=True).encode())
+
+
+def build_mcp_server(
+    catalog: Catalog, hub: SessionHub, auditor: Auditor, box: CredentialBox, connector: Connector, max_result_bytes: int,
+) -> GatewayServer:
     def track(ctx: Any) -> None:
         request = ctx.request
         session_id = request.headers.get("mcp-session-id") if request is not None else None
@@ -65,6 +71,13 @@ def build_mcp_server(catalog: Catalog, hub: SessionHub, auditor: Auditor, box: C
                     async with connector(target) as client:
                         result = await client.call_tool(tool.name, params.arguments or {})
             result = result.model_copy(update={"meta": None})
+            # Size cap: an oversized result never reaches the client, the model or the audit preview.
+            size = result_size(result)
+            if size > max_result_bytes:
+                outcome = "error"
+                error = f"Upstream '{slug}' result too large ({size // 1024} KiB > {max_result_bytes // 1024} KiB)"
+                log.warning("call %s: %s", params.name, error)
+                return error_result(error)
             if result.is_error:
                 outcome = "error"
                 error = _text(result)

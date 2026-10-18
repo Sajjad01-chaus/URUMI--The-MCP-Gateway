@@ -64,9 +64,10 @@ def target_for(state: UpstreamState, box: CredentialBox) -> Target:
 
 
 def validate_auth(auth_type: str, header_name: str | None, credential: str | None, has_existing: bool) -> None:
-    if auth_type == "header":
-        if not header_name or not HEADER_NAME_RE.match(header_name) or header_name.lower() in FORBIDDEN_HEADERS:
-            raise RegistryError("auth_header_name must be a valid custom header name (e.g. X-API-Key)")
+    if auth_type == "header" and (
+        not header_name or not HEADER_NAME_RE.match(header_name) or header_name.lower() in FORBIDDEN_HEADERS
+    ):
+        raise RegistryError("auth_header_name must be a valid custom header name (e.g. X-API-Key)")
     if auth_type in ("bearer", "header") and not credential and not has_existing:
         raise RegistryError(f"auth_type '{auth_type}' needs a credential")
 

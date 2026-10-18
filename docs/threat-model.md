@@ -50,7 +50,7 @@ Boundaries: internet → Traefik; Traefik → gateway/dashboard/WordPress; gatew
 2. **Malicious upstreams.** Annotations come from the upstream and can lie (a destructive tool marked read-only). Admin overrides exist, but a careless admin can still register a hostile server. v2: description length limits and scanning, human approval for destructive tools.
 3. **Admin compromise** gives full control. Mitigate operationally: few admins, strong passwords. v2: audit of admin actions, SSO/MFA.
 4. **No per-user rate limits** on tool calls (only the login throttle and per-upstream concurrency).
-5. **Upstream response size is not capped** (planned in design §9.4); a hostile upstream could send very large results. Chat results are truncated, MCP client results are not.
+5. **Upstream response size is capped after decoding**: results over `gateway.maxResultBytes` (256 KiB) are replaced by a tool error before they reach a client, the model or the audit log. The gateway still reads the whole response into memory first, bounded only by the call timeout and the pod's memory limit.
 6. **Plain HTTP inside the cluster** (gateway → upstreams, woo-mcp → WordPress). Limited by NetworkPolicies; v2: mTLS or a service mesh.
 7. **WordPress and MySQL official images start as root** (they drop privileges internally); documented exception.
 8. **Single node, no automated backups**: availability and data loss risk, not confidentiality.
