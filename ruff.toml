@@ -13,7 +13,7 @@ ignore = [
 
 [lint.per-file-ignores]
 # FastAPI dependencies are declared as call defaults by design.
-"services/gateway/src/gateway/{api,team,chat,deps}.py" = ["B008"]
+"services/gateway/src/gateway/{api,team,chat,deps,managed}.py" = ["B008"]
 # Tests: asserts, fixture arguments that shadow fixtures, fake secrets, and throwaway subprocess calls are expected.
 "**/tests/**" = ["S101", "S105", "S106", "S311", "F811", "ASYNC110"]
 # Operator scripts run fixed kubectl/helm commands from trusted arguments.

@@ -56,6 +56,27 @@ gateway:
     requests: { cpu: 100m, memory: 160Mi }
     limits: { cpu: "1", memory: 512Mi }
 
+stores:
+  maxPerUser: 2
+  maxTotal: 3
+
+provisioner:
+  enabled: false
+  image: urumi/provisioner:dev
+  imagePullPolicy: IfNotPresent
+  concurrency: 2
+  pollSeconds: 3
+  leaseSeconds: 60
+  leaseRenewSeconds: 20
+  maxAttempts: 3
+  timeoutMinutes: 15
+  teardownTimeoutMinutes: 5
+  apiServerCidrs: []
+  wooMcpImage: urumi/woo-mcp:dev
+  resources:
+    requests: { cpu: 50m, memory: 96Mi }
+    limits: { cpu: 500m, memory: 256Mi }
+
 # Chat agent: any OpenAI-compatible Chat Completions API (Groq by default; Ollama/OpenAI by changing these).
 llm:
   baseUrl: https://api.groq.com/openai/v1

@@ -49,6 +49,13 @@ spec:
         - podSelector:
             matchLabels:
               app.kubernetes.io/name: woo-mcp
+        {{- if .Values.networkPolicy.provisionerReadiness.enabled }}
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ .Values.networkPolicy.provisionerReadiness.namespace }}
+          podSelector:
+            matchLabels: {{- toYaml .Values.networkPolicy.provisionerReadiness.podLabels | nindent 14 }}
+        {{- end }}
       ports:
         - port: 80
 ---

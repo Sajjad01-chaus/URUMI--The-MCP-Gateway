@@ -1,0 +1,109 @@
+{{- if .Values.provisioner.enabled }}
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: urumi-tenant-admin
+  labels: {{- include "platform.labels" . | nindent 4 }}
+rules:
+  - apiGroups: [""]
+    resources: ["secrets", "configmaps", "services", "persistentvolumeclaims", "serviceaccounts", "resourcequotas", "limitranges"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: [""]
+    resources: ["endpoints"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: [""]
+    resources: ["pods/log"]
+    verbs: ["get"]
+  - apiGroups: ["apps"]
+    resources: ["deployments", "statefulsets", "replicasets"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  - apiGroups: ["batch"]
+    resources: ["jobs"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  - apiGroups: ["networking.k8s.io"]
+    resources: ["ingresses", "networkpolicies"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  - apiGroups: ["cert-manager.io"]
+    resources: ["certificates"]
+    verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: urumi-provisioner
+  labels: {{- include "platform.labels" . | nindent 4 }}
+rules:
+  - apiGroups: [""]
+    resources: ["namespaces"]
+    verbs: ["get", "list", "watch", "create", "patch", "delete"]
+  - apiGroups: ["rbac.authorization.k8s.io"]
+    resources: ["rolebindings"]
+    verbs: ["get", "create", "delete"]
+  - apiGroups: ["rbac.authorization.k8s.io"]
+    resources: ["clusterroles"]
+    resourceNames: ["urumi-tenant-admin"]
+    verbs: ["bind"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: urumi-provisioner
+  labels: {{- include "platform.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: urumi-provisioner
+subjects:
+  - kind: ServiceAccount
+    name: provisioner
+    namespace: {{ .Release.Namespace }}
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: urumi-provisioner-boundaries
+  labels: {{- include "platform.labels" . | nindent 4 }}
+spec:
+  failurePolicy: Fail
+  matchConstraints:
+    resourceRules:
+      - apiGroups: [""]
+        apiVersions: ["v1"]
+        operations: ["CREATE", "UPDATE", "DELETE"]
+        resources: ["namespaces"]
+      - apiGroups: ["rbac.authorization.k8s.io"]
+        apiVersions: ["v1"]
+        operations: ["CREATE", "UPDATE", "DELETE"]
+        resources: ["rolebindings"]
+  matchConditions:
+    - name: provisioner-service-account-only
+      expression: "request.userInfo.username == 'system:serviceaccount:{{ .Release.Namespace }}:provisioner'"
+  validations:
+    - expression: >-
+        request.resource.resource != 'namespaces' ||
+        (request.operation == 'CREATE'
+          ? object.metadata.name.matches('^(store|mcp)-[a-z0-9]([a-z0-9-]{0,18}[a-z0-9])?$') &&
+            'urumi.io/managed-by' in object.metadata.labels && object.metadata.labels['urumi.io/managed-by'] == 'provisioner'
+          : 'urumi.io/managed-by' in oldObject.metadata.labels && oldObject.metadata.labels['urumi.io/managed-by'] == 'provisioner')
+      message: provisioner may only manage labelled store-* or mcp-* namespaces
+    - expression: >-
+        request.resource.resource != 'rolebindings' ||
+        ('urumi.io/managed-by' in namespaceObject.metadata.labels && namespaceObject.metadata.labels['urumi.io/managed-by'] == 'provisioner' &&
+         (request.operation == 'DELETE' ||
+          (object.roleRef.kind == 'ClusterRole' && object.roleRef.name == 'urumi-tenant-admin' &&
+           object.subjects.size() == 1 && object.subjects[0].kind == 'ServiceAccount' &&
+           object.subjects[0].name == 'provisioner' && object.subjects[0].namespace == '{{ .Release.Namespace }}')))
+      message: provisioner may bind only urumi-tenant-admin to itself in managed namespaces
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata:
+  name: urumi-provisioner-boundaries
+  labels: {{- include "platform.labels" . | nindent 4 }}
+spec:
+  policyName: urumi-provisioner-boundaries
+  validationActions: [Deny]
+{{- end }}

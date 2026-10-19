@@ -60,6 +60,24 @@ networkPolicy:
     namespace: kube-system
     podLabels:
       app.kubernetes.io/name: traefik
+  provisionerReadiness:
+    enabled: false
+    namespace: platform
+    podLabels:
+      app.kubernetes.io/name: provisioner
+
+quota:
+  enabled: false
+  requestsCpu: "1"
+  requestsMemory: 1536Mi
+  limitsCpu: "3"
+  limitsMemory: 3Gi
+  pods: "10"
+  persistentVolumeClaims: "3"
+  requestsStorage: 6Gi
+  defaultRequest: { cpu: 50m, memory: 64Mi }
+  defaultLimit: { cpu: 500m, memory: 256Mi }
+  max: { cpu: "1", memory: 1Gi }
 
 # Set create=false to use Secrets created outside Helm (same names/keys as templates/secrets.yaml).
 secrets:

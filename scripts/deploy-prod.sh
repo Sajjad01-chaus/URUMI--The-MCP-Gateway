@@ -29,7 +29,7 @@ echo "ok (issuer: $ISSUER)"
 
 # Fail before helm if an image is missing, instead of pods stuck in ImagePullBackOff.
 step "checking images on GHCR for $TAG"
-for svc in woo-mcp gateway dashboard notes-mcp fx-mcp; do
+for svc in woo-mcp gateway provisioner dashboard notes-mcp fx-mcp; do
   token=$(curl -fsS "https://ghcr.io/token?scope=repository:${REGISTRY#ghcr.io/}/urumi-$svc:pull" | sed -E 's/.*"token":"([^"]+)".*/\1/')
   code=$(curl -s -o /dev/null -w '%{http_code}' -H "Authorization: Bearer $token" \
     -H "Accept: application/vnd.oci.image.index.v1+json,application/vnd.oci.image.manifest.v1+json,application/vnd.docker.distribution.manifest.v2+json" \
@@ -53,6 +53,8 @@ helm upgrade --install platform "$ROOT/deploy/charts/platform" -n platform --cre
   -f "$ROOT/deploy/values/platform/values-prod.yaml" -f "$SECRETS" \
   --set global.tls.clusterIssuer="$ISSUER" \
   --set gateway.image="$REGISTRY/urumi-gateway:$TAG" \
+  --set provisioner.image="$REGISTRY/urumi-provisioner:$TAG" \
+  --set provisioner.wooMcpImage="$REGISTRY/urumi-woo-mcp:$TAG" \
   --set dashboard.image="$REGISTRY/urumi-dashboard:$TAG" \
   --set notesMcp.image="$REGISTRY/urumi-notes-mcp:$TAG" \
   --set fxMcp.image="$REGISTRY/urumi-fx-mcp:$TAG" \

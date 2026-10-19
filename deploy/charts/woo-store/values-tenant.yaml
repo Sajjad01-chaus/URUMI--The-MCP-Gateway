@@ -1,0 +1,35 @@
+store:
+  subdomain: store-tenant
+  title: Tenant Store
+
+mysql:
+  storage:
+    size: 2Gi
+  resources:
+    requests: { cpu: 50m, memory: 192Mi }
+    limits: { cpu: 500m, memory: 512Mi }
+
+wordpress:
+  storage:
+    size: 2Gi
+  resources:
+    requests: { cpu: 50m, memory: 128Mi }
+    limits: { cpu: 500m, memory: 384Mi }
+
+bootstrap:
+  sampleProducts: true
+  resources:
+    requests: { cpu: 50m, memory: 128Mi }
+    limits: { cpu: 500m, memory: 384Mi }
+
+wooMcp:
+  resources:
+    requests: { cpu: 20m, memory: 64Mi }
+    limits: { cpu: 500m, memory: 192Mi }
+
+quota:
+  enabled: true
+
+networkPolicy:
+  provisionerReadiness:
+    enabled: true

@@ -1,7 +1,21 @@
 import uuid
 from datetime import UTC, datetime
 
-from sqlalchemy import JSON, BigInteger, Boolean, DateTime, ForeignKey, Integer, LargeBinary, String, Text, UniqueConstraint
+from sqlalchemy import (
+    JSON,
+    BigInteger,
+    Boolean,
+    CheckConstraint,
+    DateTime,
+    ForeignKey,
+    Index,
+    Integer,
+    LargeBinary,
+    String,
+    Text,
+    UniqueConstraint,
+    text,
+)
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 
@@ -105,3 +119,46 @@ class AuditLog(Base):
     request_id: Mapped[str | None] = mapped_column(String(64))
     client_name: Mapped[str | None] = mapped_column(String(100))
     args_preview: Mapped[dict | None] = mapped_column(JSON)
+
+
+class ManagedRelease(Base):
+    __tablename__ = "managed_releases"
+    __table_args__ = (
+        CheckConstraint("kind IN ('store', 'hosted_mcp')", name="ck_managed_releases_kind"),
+        CheckConstraint("desired IN ('present', 'absent')", name="ck_managed_releases_desired"),
+        CheckConstraint(
+            "status IN ('provisioning', 'ready', 'failed', 'deleting', 'deleted')",
+            name="ck_managed_releases_status",
+        ),
+        Index(
+            "uq_managed_releases_active_slug",
+            "slug",
+            unique=True,
+            postgresql_where=text("status <> 'deleted'"),
+            sqlite_where=text("status <> 'deleted'"),
+        ),
+        Index("ix_managed_releases_work", "status", "lease_until", "created_at"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    kind: Mapped[str] = mapped_column(String(20))
+    slug: Mapped[str] = mapped_column(String(20))
+    display_name: Mapped[str] = mapped_column(String(100))
+    namespace: Mapped[str] = mapped_column(String(63))
+    release: Mapped[str] = mapped_column(String(53))
+    owner_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), index=True)
+    desired: Mapped[str] = mapped_column(String(10), default="present")
+    status: Mapped[str] = mapped_column(String(20), default="provisioning")
+    status_reason: Mapped[str] = mapped_column(Text, default="queued")
+    spec: Mapped[dict] = mapped_column(JSON, default=dict)
+    secrets_encrypted: Mapped[bytes] = mapped_column(LargeBinary)
+    server_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("upstream_servers.id", ondelete="SET NULL"), index=True
+    )
+    attempts: Mapped[int] = mapped_column(Integer, default=0)
+    lease_owner: Mapped[str | None] = mapped_column(String(100))
+    lease_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), index=True)
+    deadline_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    ready_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)

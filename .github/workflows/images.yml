@@ -1,4 +1,4 @@
-# Builds the 5 service images on every push to main and publishes them to GHCR.
+# Builds the 6 service images on every push to main and publishes them to GHCR.
 # Tags: the full commit SHA (immutable, used by deploys and rollbacks) and "latest".
 name: images
 
@@ -7,6 +7,8 @@ on:
     branches: [main]
     paths:
       - "services/**"
+      - "deploy/charts/woo-store/**"
+      - ".dockerignore"
       - ".github/workflows/images.yml"
   workflow_dispatch:
 
@@ -24,7 +26,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        service: [gateway, dashboard, woo-mcp, notes-mcp, fx-mcp]
+        service: [gateway, provisioner, dashboard, woo-mcp, notes-mcp, fx-mcp]
     steps:
       - uses: actions/checkout@v4
 
@@ -42,7 +44,8 @@ jobs:
 
       - uses: docker/build-push-action@v6
         with:
-          context: services/${{ matrix.service }}
+          context: ${{ matrix.service == 'provisioner' && '.' || format('services/{0}', matrix.service) }}
+          file: ${{ matrix.service == 'provisioner' && 'services/provisioner/Dockerfile' || format('services/{0}/Dockerfile', matrix.service) }}
           platforms: linux/amd64
           push: true
           tags: |

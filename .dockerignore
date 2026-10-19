@@ -1,0 +1,16 @@
+**
+!services/
+!services/gateway/
+!services/gateway/pyproject.toml
+!services/gateway/uv.lock
+!services/gateway/alembic.ini
+!services/gateway/src/
+!services/gateway/src/**
+!services/gateway/migrations/
+!services/gateway/migrations/**
+!services/provisioner/
+!services/provisioner/Dockerfile
+!deploy/
+!deploy/charts/
+!deploy/charts/woo-store/
+!deploy/charts/woo-store/**

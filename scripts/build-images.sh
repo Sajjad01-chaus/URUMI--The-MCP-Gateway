@@ -5,7 +5,7 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 CLUSTER="${CLUSTER:-urumi}"
-ALL_SERVICES=(woo-mcp gateway notes-mcp fx-mcp dashboard)
+ALL_SERVICES=(woo-mcp gateway provisioner notes-mcp fx-mcp dashboard)
 TAG=dev
 IMPORT=false
 services=()
@@ -28,7 +28,11 @@ for svc in "${services[@]}"; do
   echo "== building $image"
   start=$SECONDS
   # pipefail makes a failed build fail the script even though its output goes through tail (build-log #33).
-  docker build -t "$image" "$ROOT/services/$svc" 2>&1 | tail -n 3
+  if [[ "$svc" == provisioner ]]; then
+    docker build -f "$ROOT/services/provisioner/Dockerfile" -t "$image" "$ROOT" 2>&1 | tail -n 3
+  else
+    docker build -t "$image" "$ROOT/services/$svc" 2>&1 | tail -n 3
+  fi
   echo "   done in $((SECONDS - start)) s"
   images+=("$image")
 done

@@ -10,8 +10,8 @@ from sqlalchemy import func, select
 
 from .catalog import SLUG_RE, Catalog, UpstreamState
 from .config import Settings
-from .db import Database
-from .models import ToolPolicy, UpstreamServer, User, utcnow
+from .db import Database, advisory_xact_lock
+from .models import ManagedRelease, ToolPolicy, UpstreamServer, User, utcnow
 from .security import CredentialBox, hash_password
 from .ssrf import HostResolutionError, check_upstream_url
 from .upstream import Target
@@ -134,8 +134,16 @@ class Registry:
         validate_auth(data.auth_type, data.auth_header_name, data.credential, has_existing=False)
         await validate_url(data.url, self.settings)
         async with self.db.session() as session:
+            await advisory_xact_lock(session, f"upstream-slug:{data.slug}")
             if await session.scalar(select(UpstreamServer.id).where(UpstreamServer.slug == data.slug)):
                 raise RegistryError(f"slug '{data.slug}' is already used")
+            if await session.scalar(
+                select(ManagedRelease.id).where(
+                    ManagedRelease.slug == data.slug,
+                    ManagedRelease.status != "deleted",
+                )
+            ):
+                raise RegistryError(f"slug '{data.slug}' is already used by a managed release")
             row = UpstreamServer(
                 slug=data.slug, name=data.name, url=data.url, auth_type=data.auth_type,
                 auth_header_name=data.auth_header_name if data.auth_type == "header" else None,

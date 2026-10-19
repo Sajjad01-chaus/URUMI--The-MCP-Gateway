@@ -1,0 +1,110 @@
+{{- if .Values.provisioner.enabled }}
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: provisioner
+  labels: {{- include "platform.labels" . | nindent 4 }}
+automountServiceAccountToken: true
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: provisioner
+  labels: {{- include "platform.labels" . | nindent 4 }}
+    app.kubernetes.io/name: provisioner
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels: {{- include "platform.selector" (dict "root" . "name" "provisioner") | nindent 6 }}
+  template:
+    metadata:
+      labels: {{- include "platform.labels" . | nindent 8 }}
+        app.kubernetes.io/name: provisioner
+    spec:
+      serviceAccountName: provisioner
+      automountServiceAccountToken: true
+      securityContext: {{- include "platform.podSecurity" . | nindent 8 }}
+      initContainers:
+        - name: migrate
+          image: {{ .Values.provisioner.image }}
+          imagePullPolicy: {{ .Values.provisioner.imagePullPolicy }}
+          command:
+            - sh
+            - -c
+            - until python -c "import socket; socket.create_connection(('postgres', 5432), 2)" 2>/dev/null; do echo waiting for postgres; sleep 2; done; alembic upgrade head
+          workingDir: /app
+          env:
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef: { name: postgres-auth, key: password }
+            - name: DATABASE_URL
+              value: "postgresql+asyncpg://{{ .Values.postgres.user }}:$(POSTGRES_PASSWORD)@postgres:5432/{{ .Values.postgres.database }}"
+          securityContext: {{- include "platform.containerSecurity" . | nindent 12 }}
+          resources: {{- toYaml .Values.provisioner.resources | nindent 12 }}
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+      containers:
+        - name: provisioner
+          image: {{ .Values.provisioner.image }}
+          imagePullPolicy: {{ .Values.provisioner.imagePullPolicy }}
+          env:
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef: { name: postgres-auth, key: password }
+            - name: DATABASE_URL
+              value: "postgresql+asyncpg://{{ .Values.postgres.user }}:$(POSTGRES_PASSWORD)@postgres:5432/{{ .Values.postgres.database }}"
+            - name: CREDENTIAL_ENCRYPTION_KEY
+              valueFrom:
+                secretKeyRef: { name: gateway-secrets, key: credential-encryption-key }
+            - name: PUBLIC_DOMAIN
+              value: {{ .Values.global.domain | quote }}
+            - name: PUBLIC_SCHEME
+              value: {{ ternary "https" "http" .Values.global.tls.enabled | quote }}
+            - name: PROVISIONER_TLS_ENABLED
+              value: {{ .Values.global.tls.enabled | quote }}
+            - name: PROVISIONER_TLS_ISSUER
+              value: {{ .Values.global.tls.clusterIssuer | quote }}
+            - name: PROVISIONER_CONCURRENCY
+              value: {{ .Values.provisioner.concurrency | quote }}
+            - name: PROVISIONER_POLL_SECONDS
+              value: {{ .Values.provisioner.pollSeconds | quote }}
+            - name: PROVISIONER_LEASE_SECONDS
+              value: {{ .Values.provisioner.leaseSeconds | quote }}
+            - name: PROVISIONER_LEASE_RENEW_SECONDS
+              value: {{ .Values.provisioner.leaseRenewSeconds | quote }}
+            - name: PROVISIONER_MAX_ATTEMPTS
+              value: {{ .Values.provisioner.maxAttempts | quote }}
+            - name: PROVISIONER_TIMEOUT_MINUTES
+              value: {{ .Values.provisioner.timeoutMinutes | quote }}
+            - name: PROVISIONER_TEARDOWN_TIMEOUT_MINUTES
+              value: {{ .Values.provisioner.teardownTimeoutMinutes | quote }}
+            - name: PROVISIONER_WOO_MCP_IMAGE
+              value: {{ .Values.provisioner.wooMcpImage | quote }}
+            - name: HELM_CACHE_HOME
+              value: /tmp/helm/cache
+            - name: HELM_CONFIG_HOME
+              value: /tmp/helm/config
+            - name: HELM_DATA_HOME
+              value: /tmp/helm/data
+          livenessProbe:
+            exec:
+              command: ["python", "-c", "import os,sys,time; sys.exit(time.time()-os.path.getmtime('/tmp/provisioner-heartbeat') >= 30)"]
+            periodSeconds: 10
+            failureThreshold: 3
+          readinessProbe:
+            exec:
+              command: ["python", "-c", "import os,sys,time; sys.exit(time.time()-os.path.getmtime('/tmp/provisioner-ready') >= 15)"]
+            periodSeconds: 5
+            failureThreshold: 3
+          securityContext: {{- include "platform.containerSecurity" . | nindent 12 }}
+          resources: {{- toYaml .Values.provisioner.resources | nindent 12 }}
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: tmp
+          emptyDir: {}
+{{- end }}

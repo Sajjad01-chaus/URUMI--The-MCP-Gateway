@@ -12,3 +12,10 @@ gateway:
   resources:
     requests: { cpu: 200m, memory: 256Mi }
     limits: { cpu: "1", memory: 768Mi }
+
+stores:
+  maxTotal: 2
+
+# Enabled only in Phase 11 after the Azure API-server /32 is measured and the local gate passes.
+provisioner:
+  enabled: false

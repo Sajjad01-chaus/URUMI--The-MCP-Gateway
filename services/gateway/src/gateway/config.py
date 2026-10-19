@@ -1,4 +1,5 @@
 import json
+import tempfile
 from functools import lru_cache
 
 from pydantic import BaseModel, Field, field_validator
@@ -58,6 +59,24 @@ class Settings(BaseSettings):
     max_concurrent_calls_per_upstream: int = 10
     default_call_timeout_seconds: int = 20
     max_result_bytes: int = Field(default=256 * 1024, ge=1024)
+
+    public_domain: str = "127-0-0-1.nip.io"
+    public_scheme: str = "http"
+    stores_max_per_user: int = Field(default=2, ge=1)
+    stores_max_total: int = Field(default=3, ge=1)
+    provisioner_timeout_minutes: int = Field(default=15, ge=1)
+    provisioner_teardown_timeout_minutes: int = Field(default=5, ge=1)
+    provisioner_poll_seconds: float = Field(default=3.0, ge=0.1)
+    provisioner_concurrency: int = Field(default=2, ge=1, le=10)
+    provisioner_lease_seconds: int = Field(default=60, ge=10)
+    provisioner_lease_renew_seconds: int = Field(default=20, ge=1)
+    provisioner_max_attempts: int = Field(default=3, ge=1)
+    provisioner_chart_root: str = "/charts"
+    provisioner_tenant_values: str = "/charts/woo-store/values-tenant.yaml"
+    provisioner_temp_dir: str = Field(default_factory=tempfile.gettempdir)
+    provisioner_tls_enabled: bool = False
+    provisioner_tls_issuer: str = ""
+    provisioner_woo_mcp_image: str = "urumi/woo-mcp:dev"
 
     @field_validator("session_secret", "chat_token_secret")
     @classmethod

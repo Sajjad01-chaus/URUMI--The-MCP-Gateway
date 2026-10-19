@@ -18,6 +18,7 @@ from .config import Settings, get_settings
 from .db import Database
 from .health import HealthMonitor
 from .hub import SessionHub
+from .managed import router as managed_router
 from .mcp_gateway import build_mcp_server
 from .registry import Registry
 from .security import CredentialBox
@@ -98,5 +99,6 @@ def create_app(
     app.include_router(router)
     app.include_router(team_router)
     app.include_router(chat_router)
+    app.include_router(managed_router)
     app.mount("/", McpAuthMiddleware(mcp_app, [resolve_api_key, chat_token_resolver(db, settings.chat_token_secret)], hub, rejected_call_auditor(db, auditor)))
     return app

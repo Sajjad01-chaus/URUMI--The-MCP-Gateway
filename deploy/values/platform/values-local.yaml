@@ -2,3 +2,9 @@ global:
   domain: 127-0-0-1.nip.io
   tls:
     enabled: false
+
+provisioner:
+  enabled: true
+  apiServerCidrs:
+    - 10.43.0.1/32
+    - 172.18.0.0/16

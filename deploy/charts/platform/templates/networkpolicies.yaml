@@ -24,6 +24,11 @@ spec:
         - podSelector:
             matchLabels:
               app.kubernetes.io/name: gateway
+        {{- if .Values.provisioner.enabled }}
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: provisioner
+        {{- end }}
       ports:
         - port: 5432
 ---
@@ -131,6 +136,50 @@ spec:
       ports:
         - port: 443
         - port: 80
+{{- if .Values.provisioner.enabled }}
+---
+# Provisioner egress: DNS, Postgres, the Kubernetes API and HTTP readiness in managed namespaces.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: provisioner-egress
+  labels: {{- include "platform.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: provisioner
+  policyTypes: [Egress]
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ $np.dns.namespace }}
+          podSelector:
+            matchLabels: {{- toYaml $np.dns.podLabels | nindent 14 }}
+      ports:
+        - { port: 53, protocol: UDP }
+        - { port: 53, protocol: TCP }
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: postgres
+      ports:
+        - port: 5432
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              urumi.io/managed-by: provisioner
+      ports:
+        - port: 80
+    {{- range .Values.provisioner.apiServerCidrs }}
+    - to:
+        - ipBlock:
+            cidr: {{ . }}
+      ports:
+        - port: 443
+        - port: 6443
+    {{- end }}
+{{- end }}
 {{- if .Values.global.tls.enabled }}
 ---
 # Let's Encrypt HTTP-01: Traefik must reach cert-manager's short-lived solver pods (only those, only :8089).

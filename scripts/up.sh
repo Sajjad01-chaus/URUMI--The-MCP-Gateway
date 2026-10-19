@@ -34,7 +34,7 @@ kubectl -n kube-system rollout status deploy/traefik --timeout=300s
 
 if $SKIP_BUILD; then
   step "importing existing images"
-  k3d image import urumi/woo-mcp:dev urumi/gateway:dev urumi/notes-mcp:dev urumi/fx-mcp:dev urumi/dashboard:dev -c "$CLUSTER"
+  k3d image import urumi/woo-mcp:dev urumi/gateway:dev urumi/provisioner:dev urumi/notes-mcp:dev urumi/fx-mcp:dev urumi/dashboard:dev -c "$CLUSTER"
 else
   step "building and importing images"
   "$ROOT/scripts/build-images.sh" --import

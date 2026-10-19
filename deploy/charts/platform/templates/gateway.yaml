@@ -94,6 +94,18 @@ spec:
               value: "{{ ternary "https" "http" .Values.global.tls.enabled }}://{{ $mcpHost }}/mcp"
             - name: COOKIE_SECURE
               value: {{ .Values.global.tls.enabled | quote }}
+            - name: PUBLIC_DOMAIN
+              value: {{ .Values.global.domain | quote }}
+            - name: PUBLIC_SCHEME
+              value: {{ ternary "https" "http" .Values.global.tls.enabled | quote }}
+            - name: STORES_MAX_PER_USER
+              value: {{ .Values.stores.maxPerUser | quote }}
+            - name: STORES_MAX_TOTAL
+              value: {{ .Values.stores.maxTotal | quote }}
+            - name: PROVISIONER_TIMEOUT_MINUTES
+              value: {{ .Values.provisioner.timeoutMinutes | quote }}
+            - name: PROVISIONER_TEARDOWN_TIMEOUT_MINUTES
+              value: {{ .Values.provisioner.teardownTimeoutMinutes | quote }}
             - name: LLM_BASE_URL
               value: {{ .Values.llm.baseUrl | quote }}
             - name: LLM_MODEL

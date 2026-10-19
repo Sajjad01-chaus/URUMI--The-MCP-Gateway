@@ -1,0 +1,28 @@
+{{- if .Values.quota.enabled }}
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: tenant-quota
+  labels: {{- include "store.labels" . | nindent 4 }}
+spec:
+  hard:
+    requests.cpu: {{ .Values.quota.requestsCpu | quote }}
+    requests.memory: {{ .Values.quota.requestsMemory | quote }}
+    limits.cpu: {{ .Values.quota.limitsCpu | quote }}
+    limits.memory: {{ .Values.quota.limitsMemory | quote }}
+    pods: {{ .Values.quota.pods | quote }}
+    persistentvolumeclaims: {{ .Values.quota.persistentVolumeClaims | quote }}
+    requests.storage: {{ .Values.quota.requestsStorage | quote }}
+---
+apiVersion: v1
+kind: LimitRange
+metadata:
+  name: tenant-limits
+  labels: {{- include "store.labels" . | nindent 4 }}
+spec:
+  limits:
+    - type: Container
+      defaultRequest: {{- toYaml .Values.quota.defaultRequest | nindent 8 }}
+      default: {{- toYaml .Values.quota.defaultLimit | nindent 8 }}
+      max: {{- toYaml .Values.quota.max | nindent 8 }}
+{{- end }}
