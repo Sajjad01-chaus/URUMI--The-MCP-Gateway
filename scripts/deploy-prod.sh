@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Deploys both charts on the production k3s VM with images from GHCR.
-# Safe to re-run: issuers are applied idempotently and both releases use helm upgrade --install.
+# Safe to re-run: existing releases are backed up and Helm rolls back failed upgrades.
 # Usage: scripts/deploy-prod.sh <git-sha> [--issuer letsencrypt-staging|letsencrypt-prod]
 set -euo pipefail
 
@@ -27,6 +27,18 @@ for chart in platform woo-store; do
 done
 echo "ok (issuer: $ISSUER)"
 
+platform_exists=false
+store_exists=false
+helm status platform -n platform >/dev/null 2>&1 && platform_exists=true
+helm status store-main -n store-main >/dev/null 2>&1 && store_exists=true
+if [[ "$platform_exists" != "$store_exists" ]]; then
+  die "only one production release exists; resolve the partial state before deploying"
+fi
+if [[ "$platform_exists" == true ]]; then
+  step "verified pre-deploy backup"
+  bash "$ROOT/scripts/backup-prod.sh"
+fi
+
 # Fail before helm if an image is missing, instead of pods stuck in ImagePullBackOff.
 step "checking images on GHCR for $TAG"
 for svc in woo-mcp gateway provisioner dashboard notes-mcp fx-mcp; do
@@ -48,7 +60,7 @@ helm upgrade --install store-main "$ROOT/deploy/charts/woo-store" -n store-main 
   -f "$ROOT/deploy/values/woo-store/values-prod.yaml" -f "$SECRETS" \
   --set global.tls.clusterIssuer="$ISSUER" \
   --set wooMcp.image="$REGISTRY/urumi-woo-mcp:$TAG" \
-  --wait --timeout 15m
+  --rollback-on-failure --timeout 15m
 
 step "platform chart (platform)"
 kubectl get namespace platform >/dev/null 2>&1 || kubectl create namespace platform
@@ -62,7 +74,7 @@ helm upgrade --install platform "$ROOT/deploy/charts/platform" -n platform --cre
   --set dashboard.image="$REGISTRY/urumi-dashboard:$TAG" \
   --set notesMcp.image="$REGISTRY/urumi-notes-mcp:$TAG" \
   --set fxMcp.image="$REGISTRY/urumi-fx-mcp:$TAG" \
-  --wait --timeout 10m
+  --rollback-on-failure --timeout 10m
 
 step "status"
 kubectl get pods -n store-main

@@ -5,7 +5,7 @@ Urumi deploys immutable image tags with Helm. The image tag is injected as `APP_
 ## Safety rules
 
 1. Use a commit-SHA image tag; never deploy `latest`.
-2. Before a production v2 change, save `pg_dump`, `mysqldump`, `prod.secrets.yaml`, `helm history platform`, and `helm history store-main` as described in [vps-setup.md](vps-setup.md).
+2. Before a production change, run `scripts/backup-prod.sh`. It saves and verifies Postgres/MySQL dumps, `prod.secrets.yaml`, both Helm histories/values/manifests, cluster state and the repository commit in a private timestamped directory.
 3. Keep database migrations expand/contract and backward compatible for one release. Rollback changes containers and Kubernetes objects; it does not reverse a destructive database migration.
 4. Run `helm diff` when available, then use `--wait --rollback-on-failure --timeout 5m` for upgrades.
 5. Verify `/healthz`, the dashboard version, tool calls, `helm history`, pod readiness and error logs before declaring success.
@@ -19,7 +19,15 @@ Builds publish all images under the same Git commit SHA. On the VM, pull the new
 bash scripts/deploy-prod.sh <commit-sha>
 ```
 
-The deploy script checks every image first and waits for both Helm releases. Keep a tool-call loop running during the platform rollout to prove availability.
+When existing releases are present, the deploy script requires a verified backup before checking images or changing the cluster. It then checks every image and uses Helm's automatic rollback on failure for both releases. Keep a tool-call loop running during the platform rollout to prove availability.
+
+Backups default to `~/urumi-backups/<UTC timestamp>` on the VM. To choose a different private filesystem, set `URUMI_BACKUP_ROOT` or pass a directory directly:
+
+```bash
+bash scripts/backup-prod.sh /mnt/private/urumi-backups
+```
+
+Each completed directory contains `SHA256SUMS`; a failed run retains an `.incomplete` directory and blocks deployment.
 
 ## Automatic rollback on a failed upgrade
 

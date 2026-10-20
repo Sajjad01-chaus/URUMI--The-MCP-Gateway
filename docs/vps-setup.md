@@ -210,7 +210,7 @@ print(f"groqApiKey set (length {len(key)})")
 EOF
 ```
 
-`scripts/deploy-prod.sh <image-sha> [--issuer …]` checks the prerequisites (secrets file `600` with the key set, domain set, cert-manager present, all 5 GHCR images pullable), applies the two ClusterIssuers (`deploy/prod/cluster-issuers.yaml`), then runs both `helm upgrade --install` with `values-prod.yaml`, the prod secrets and the GHCR images. `<image-sha>` is the commit the **images** workflow built (Actions → images → run), not necessarily the latest commit.
+`scripts/deploy-prod.sh <image-sha> [--issuer …]` checks the prerequisites (secrets file `600` with the key set, domain set, cert-manager present, all 6 GHCR images pullable). For an upgrade, it first runs `scripts/backup-prod.sh`, which creates verified database dumps plus a secrets/Helm restore set under `~/urumi-backups/`. It then applies the two ClusterIssuers (`deploy/prod/cluster-issuers.yaml`) and runs both `helm upgrade --install --rollback-on-failure` commands with `values-prod.yaml`, the prod secrets and the GHCR images. `<image-sha>` is the commit the **images** workflow built (Actions → images → run), not necessarily the latest commit.
 
 First deploy with the staging issuer:
 ```bash
@@ -256,7 +256,7 @@ claude mcp add --transport http urumi-prod https://mcp.urumi-sajjad.duckdns.org/
 | Roll back | `helm history platform -n platform` → `helm rollback platform <rev> -n platform` (PVC data untouched) |
 | Save credit | Azure portal → VM → **Stop** (deallocates; static IP + disk kept, small disk cost). Start again → k3s and all pods come back by themselves |
 | Logs | `kubectl -n platform logs deploy/gateway -c gateway --tail=100` |
-| Backup | `kubectl -n store-main exec mysql-0 -- mysqldump …` and `pg_dump` from `postgres-0` to a file, `scp` it home (single-node `local-path` storage = the VM disk is the only copy) |
+| Backup | `bash scripts/backup-prod.sh` creates a private, checksummed Postgres/MySQL + secrets + Helm restore set under `~/urumi-backups`; copy it off the VM (single-node `local-path` storage = the VM disk is otherwise the only copy) |
 | Remove everything | Azure → delete resource group `urumi-rg` |
 
 ## Troubleshooting

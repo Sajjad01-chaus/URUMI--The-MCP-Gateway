@@ -22,6 +22,8 @@ jobs:
       - uses: astral-sh/setup-uv@v6
       - name: ruff
         run: uvx ruff@0.17.1 check .
+      - name: Shell syntax
+        run: bash -n scripts/*.sh
 
   python:
     runs-on: ubuntu-24.04
