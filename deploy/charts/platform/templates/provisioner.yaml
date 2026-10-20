@@ -83,6 +83,8 @@ spec:
               value: {{ .Values.provisioner.teardownTimeoutMinutes | quote }}
             - name: PROVISIONER_WOO_MCP_IMAGE
               value: {{ .Values.provisioner.wooMcpImage | quote }}
+            - name: PROVISIONER_METRICS_PORT
+              value: "9100"
             - name: HOSTED_MCP_ALLOWED_REGISTRIES
               value: {{ join "," .Values.hostedMcp.allowedRegistries | quote }}
             - name: HELM_CACHE_HOME
@@ -91,6 +93,9 @@ spec:
               value: /tmp/helm/config
             - name: HELM_DATA_HOME
               value: /tmp/helm/data
+          ports:
+            - name: metrics
+              containerPort: 9100
           livenessProbe:
             exec:
               command: ["python", "-c", "import os,sys,time; sys.exit(time.time()-os.path.getmtime('/tmp/provisioner-heartbeat') >= 30)"]

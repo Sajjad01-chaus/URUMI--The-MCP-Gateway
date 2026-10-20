@@ -1,3 +1,5 @@
+import socket
+import ssl
 from collections.abc import AsyncIterator, Callable
 from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from dataclasses import dataclass
@@ -6,7 +8,7 @@ import httpx2
 from mcp import Client
 from mcp.client.streamable_http import streamable_http_client
 
-from .ssrf import check_upstream_url
+from .ssrf import HostResolutionError, UnsafeUrlError, check_upstream_url
 
 
 @dataclass(frozen=True)
@@ -48,21 +50,59 @@ def http_connector(allowed_internal_hosts: list[str]) -> Connector:
     return connect
 
 
-def describe_error(exc: BaseException) -> str:
-    """Short, human-readable reason an upstream call failed (shown in the dashboard and to models)."""
+def _leaf(exc: BaseException) -> BaseException:
     leaf = exc
     while isinstance(leaf, BaseExceptionGroup) and leaf.exceptions:
         leaf = leaf.exceptions[0]
+    return leaf
+
+
+def classify_error(exc: BaseException) -> str:
+    """Return one bounded failure class suitable for metrics and the dashboard."""
+    leaf = _leaf(exc)
+    chain: BaseException | None = leaf
+    while chain is not None:
+        if isinstance(chain, HostResolutionError | socket.gaierror):
+            return "dns"
+        if isinstance(chain, UnsafeUrlError):
+            return "blocked"
+        if isinstance(chain, ssl.SSLError):
+            return "tls"
+        chain = chain.__cause__ or chain.__context__
     if isinstance(leaf, TimeoutError | httpx2.TimeoutException):
-        return "timed out"
+        return "timeout"
+    if isinstance(leaf, httpx2.HTTPStatusError):
+        return "auth" if leaf.response.status_code in (401, 403) else "http"
     if isinstance(leaf, httpx2.ConnectError):
         text = str(leaf).lower()
         if "name" in text and ("resolve" in text or "known" in text or "not found" in text):
-            return "DNS lookup failed"
-        return "connection refused or host unreachable"
+            return "dns"
+        if "ssl" in text or "certificate" in text or "tls" in text:
+            return "tls"
+        return "refused"
+    return "protocol"
+
+
+def describe_error(exc: BaseException) -> str:
+    """Short, classified reason shown in the dashboard and to models."""
+    leaf = _leaf(exc)
+    failure = classify_error(exc)
+    if failure == "dns":
+        if isinstance(leaf, HostResolutionError):
+            return str(leaf)
+        return "upstream name does not resolve"
+    if failure == "blocked":
+        return f"URL blocked by SSRF guard: {leaf}"
+    if failure == "tls":
+        return "TLS certificate is not valid for the upstream host"
+    if isinstance(leaf, TimeoutError | httpx2.TimeoutException):
+        return "no response before the timeout"
+    if failure == "refused":
+        return "connection refused (pod down or Service has no ready endpoints)"
     if isinstance(leaf, httpx2.HTTPStatusError):
         code = leaf.response.status_code
-        hint = " (check the upstream credential)" if code in (401, 403) else ""
-        return f"upstream answered HTTP {code}{hint}"
+        if failure == "auth":
+            return f"upstream rejected the gateway credential (HTTP {code})"
+        return f"upstream answered HTTP {code}"
     message = str(leaf) or type(leaf).__name__
-    return message[:200]
+    return f"not an MCP Streamable HTTP endpoint: {message[:160]}"

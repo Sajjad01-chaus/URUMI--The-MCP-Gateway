@@ -21,6 +21,7 @@ from .hosted import router as hosted_router
 from .hub import SessionHub
 from .managed import router as managed_router
 from .mcp_gateway import build_mcp_server
+from .metrics import GatewayMetrics
 from .registry import Registry
 from .release_sync import ManagedReleaseSync
 from .security import CredentialBox
@@ -45,6 +46,7 @@ class Services:
     resolve_api_key: Resolver
     throttle: LoginThrottle
     chat: ChatAgent
+    metrics: GatewayMetrics
     chat_busy: set[uuid.UUID] = field(default_factory=set)
 
 
@@ -58,10 +60,11 @@ def create_app(
     box = CredentialBox(settings.credential_encryption_key)
     catalog = Catalog(settings.max_concurrent_calls_per_upstream)
     hub = SessionHub()
+    metrics = GatewayMetrics()
     registry = Registry(db, box, settings, catalog)
     connector = connector or http_connector(settings.allowed_internal_host_patterns)
     monitor = HealthMonitor(
-        catalog, registry, connector, hub,
+        catalog, registry, connector, hub, metrics,
         settings.health_interval_seconds, settings.health_timeout_seconds, settings.unreachable_after_failures,
     )
     release_sync = ManagedReleaseSync(db, box, catalog, registry, monitor, settings.provisioner_poll_seconds)
@@ -72,11 +75,11 @@ def create_app(
     chat_agent = ChatAgent(settings, llm or owned_llm)
     svc = Services(
         settings, db, box, catalog, hub, registry, monitor, release_sync,
-        resolve_api_key, LoginThrottle(), chat_agent,
+        resolve_api_key, LoginThrottle(), chat_agent, metrics,
     )
 
     auditor = Auditor(db)
-    mcp_server = build_mcp_server(catalog, hub, auditor, box, connector, settings.max_result_bytes)
+    mcp_server = build_mcp_server(catalog, hub, auditor, box, connector, metrics, settings.max_result_bytes)
     mcp_app = mcp_server.streamable_http_app(
         transport_security=TransportSecuritySettings(
             enable_dns_rebinding_protection=True,

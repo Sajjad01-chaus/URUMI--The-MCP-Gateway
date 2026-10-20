@@ -77,6 +77,7 @@ class Settings(BaseSettings):
     provisioner_tls_enabled: bool = False
     provisioner_tls_issuer: str = ""
     provisioner_woo_mcp_image: str = "urumi/woo-mcp:dev"
+    provisioner_metrics_port: int = Field(default=9100, ge=1024, le=65535)
     hosted_mcp_allowed_registries: str = "ghcr.io/sajjad01-chaus,docker.io/mcp"
 
     @field_validator("session_secret", "chat_token_secret")

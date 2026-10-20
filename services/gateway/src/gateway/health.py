@@ -6,9 +6,10 @@ from mcp import Client, types
 
 from .catalog import Catalog, UpstreamState
 from .hub import SessionHub
+from .metrics import GatewayMetrics
 from .models import utcnow
 from .registry import Registry, target_for
-from .upstream import Connector, describe_error
+from .upstream import Connector, classify_error, describe_error
 
 log = logging.getLogger(__name__)
 
@@ -34,9 +35,9 @@ class HealthMonitor:
 
     def __init__(
         self, catalog: Catalog, registry: Registry, connector: Connector, hub: SessionHub,
-        interval: float, timeout: float, failures_to_unreachable: int,
+        metrics: GatewayMetrics, interval: float, timeout: float, failures_to_unreachable: int,
     ):
-        self.catalog, self.registry, self.connector, self.hub = catalog, registry, connector, hub
+        self.catalog, self.registry, self.connector, self.hub, self.metrics = catalog, registry, connector, hub, metrics
         self.interval, self.timeout, self.failures_to_unreachable = interval, timeout, failures_to_unreachable
 
     async def run(self) -> None:
@@ -66,19 +67,26 @@ class HealthMonitor:
         await self.notify_if_changed(before)
 
     async def check(self, state: UpstreamState) -> None:
+        previous_status = state.status
         try:
             with anyio.fail_after(self.timeout):
                 async with self.connector(target_for(state, self.registry.box)) as client:
                     tools = await list_all_tools(client)
             state.tools, state.status, state.last_error, state.consecutive_failures = tools, "connected", None, 0
+            result = "ok"
         except Exception as exc:
             state.consecutive_failures += 1
             state.last_error = describe_error(exc)
+            result = classify_error(exc)
             if state.status != "connected" or state.consecutive_failures >= self.failures_to_unreachable:
                 if state.status != "unreachable":
                     log.warning("upstream %s unreachable: %s", state.slug, state.last_error)
                 state.status = "unreachable"
+        if state.status != previous_status or state.status_since is None:
+            state.status_since = utcnow()
         state.last_checked_at = utcnow()
+        self.metrics.upstream_up.labels(state.slug).set(result == "ok")
+        self.metrics.health_checks.labels(state.slug, result).inc()
         try:
             await self.registry.persist_health(state)
         except Exception:

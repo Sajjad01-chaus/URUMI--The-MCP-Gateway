@@ -160,6 +160,29 @@ export interface AuditPage {
   next_cursor: number | null;
 }
 
+export type StatsWindow = "15m" | "1h" | "24h";
+
+export interface GatewayStats {
+  window: StatsWindow;
+  generated_at: string;
+  total_calls: number;
+  total_errors: number;
+  servers: Array<{
+    slug: string;
+    name: string;
+    status: Server["status"];
+    status_since: string | null;
+    calls: number;
+    error_rate: number;
+    p50_ms: number;
+    p95_ms: number;
+    last_error: string | null;
+  }>;
+  top_tools: Array<{ name: string; calls: number; errors: number }>;
+  top_error_tools: Array<{ name: string; calls: number; errors: number }>;
+  users: Array<{ email: string; total: number; mcp: number; chat: number }>;
+}
+
 export interface ChatMessage {
   role: "user" | "assistant";
   content: string;
@@ -290,4 +313,5 @@ export const api = {
   chat: (messages: ChatMessage[]) => request<ChatTurn>("POST", "/chat", { messages }),
 
   audit: (filters: Record<string, string | number | undefined | null>) => request<AuditPage>("GET", `/audit${q(filters)}`),
+  stats: (window: StatsWindow) => request<GatewayStats>("GET", `/stats${q({ window })}`),
 };

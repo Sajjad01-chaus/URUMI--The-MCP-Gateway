@@ -1,6 +1,6 @@
 # Urumi MCP Gateway — v2 System Design
 
-> Status: **approved; Phases 10.0–10.3 complete locally; Phase 10.4 next** (updated 2026-10-20). v2 builds on top of the implemented and deployed v1.
+> Status: **approved; Phases 10.0–10.4 complete locally; Phase 10.5 next** (updated 2026-10-20). v2 builds on top of the implemented and deployed v1.
 > [v1-system-design.md](v1-system-design.md) stays **frozen** as the original plan. This document only describes **what changes**; anything not mentioned here works exactly as v1 says.
 > Deadline: **2026-10-22**. Feature freeze: **2026-10-21 12:00 IST** (§16).
 

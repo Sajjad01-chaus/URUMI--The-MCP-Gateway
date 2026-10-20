@@ -10,6 +10,7 @@ import LoginPage from "./pages/Login";
 import MembersPage from "./pages/Members";
 import PermissionsPage from "./pages/Permissions";
 import ServersPage from "./pages/Servers";
+import StatsPage from "./pages/Stats";
 import StoresPage from "./pages/Stores";
 import ToolsPage from "./pages/Tools";
 import { RoleBadge } from "./ui";
@@ -33,6 +34,7 @@ function Layout() {
         <NavLink to="/tools" className={link}>Tools</NavLink>
         {isAdmin && <NavLink to="/permissions" className={link}>Tool permissions</NavLink>}
         <NavLink to="/audit" className={link}>Audit log</NavLink>
+        {isAdmin && <NavLink to="/stats" className={link}>Stats</NavLink>}
         <div className="nav-section">Access</div>
         <NavLink to="/keys" className={link}>API keys</NavLink>
         <NavLink to="/connect" className={link}>Connect a client</NavLink>
@@ -67,6 +69,7 @@ export default function App() {
         <Route path="/keys" element={<KeysPage />} />
         <Route path="/connect" element={<ConnectPage />} />
         <Route path="/audit" element={<AuditPage />} />
+        <Route path="/stats" element={<RequireAuth admin><StatsPage /></RequireAuth>} />
       </Route>
       <Route path="*" element={<Navigate to="/servers" replace />} />
     </Routes>

@@ -1,12 +1,14 @@
 import asyncio
 import json
 import logging
+import time
 from datetime import UTC, datetime
 from pathlib import Path
 
 from sqlalchemy.exc import SQLAlchemyError
 
 from ..config import Settings
+from ..metrics import ProvisionerMetrics
 from ..models import ManagedRelease
 from ..security import CredentialBox
 from .helm import HelmClient, HelmError
@@ -34,12 +36,14 @@ class Provisioner:
         helm: HelmClient,
         kube: KubernetesClient,
         box: CredentialBox,
+        metrics: ProvisionerMetrics | None = None,
     ):
         self.settings = settings
         self.repository = repository
         self.helm = helm
         self.kube = kube
         self.box = box
+        self.metrics = metrics or ProvisionerMetrics()
         self.tasks: dict[object, asyncio.Task] = {}
 
     async def run(self) -> None:
@@ -83,6 +87,8 @@ class Provisioner:
                 raise DeletionRequested
 
     async def process(self, row: ManagedRelease) -> None:
+        started = time.monotonic()
+        result = "error"
         try:
             if row.desired == "absent" or row.status == "deleting":
                 await self.repository.status(row.id, "uninstalling Helm release")
@@ -95,6 +101,7 @@ class Provisioner:
                     await asyncio.sleep(2)
                 await self.repository.deleted(row.id)
                 log.info("deleted managed release %s", row.slug)
+                result = "deleted"
                 return
 
             release_secrets = json.loads(self.box.decrypt(row.secrets_encrypted))
@@ -113,17 +120,25 @@ class Provisioner:
             await self._with_lease(row, operation)
             await self.repository.ready(row.id, row.kind)
             log.info("managed release %s is ready", row.slug)
+            result = "ready"
         except DeletionRequested:
             log.info("managed release %s switched to deletion", row.slug)
+            result = "deletion_requested"
         except asyncio.CancelledError:
             raise
         except (HelmError, KubernetesError, OSError, ValueError, json.JSONDecodeError) as exc:
             if row.desired == "absent" or row.status == "deleting":
                 await self.repository.failed_teardown(row.id, str(exc))
                 log.warning("teardown of %s failed: %s", row.slug, exc)
+                result = "teardown_failed"
             else:
                 outcome = await self.repository.failed_attempt(row.id, str(exc))
                 log.warning("provisioning attempt for %s ended %s: %s", row.slug, outcome, exc)
+                result = outcome
         except Exception as exc:
             log.exception("unexpected provisioner failure for %s", row.slug)
             await self.repository.failed_attempt(row.id, f"unexpected provisioner error: {type(exc).__name__}")
+            result = "unexpected"
+        finally:
+            self.metrics.total.labels(row.kind, result).inc()
+            self.metrics.duration.labels(row.kind).observe(time.monotonic() - started)

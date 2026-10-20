@@ -1,11 +1,15 @@
 import logging
+import math
 import uuid
-from datetime import datetime
+from collections import Counter, defaultdict
+from datetime import UTC, datetime, timedelta
 from typing import Any, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from prometheus_client import CONTENT_TYPE_LATEST
 from pydantic import BaseModel
 from sqlalchemy import select, text
+from starlette.responses import Response
 
 from .auth import Principal
 from .catalog import UpstreamState, default_min_role, exposed_name
@@ -84,6 +88,14 @@ async def readyz(request: Request):
         log.warning("readiness check failed: %s", exc)
         raise HTTPException(503, "database unavailable") from exc
     return {"status": "ready"}
+
+
+@router.get("/metrics", include_in_schema=False)
+async def metrics(request: Request):
+    svc = services(request)
+    for state in svc.catalog.servers.values():
+        svc.metrics.upstream_up.labels(state.slug).set(state.is_routable)
+    return Response(svc.metrics.render(svc.hub.session_count), media_type=CONTENT_TYPE_LATEST)
 
 
 @router.get("/api/servers", response_model=list[ServerOut])
@@ -215,6 +227,42 @@ class AuditPage(BaseModel):
     next_cursor: int | None
 
 
+class ServerStats(BaseModel):
+    slug: str
+    name: str
+    status: str
+    status_since: datetime | None
+    calls: int
+    error_rate: float
+    p50_ms: int
+    p95_ms: int
+    last_error: str | None
+
+
+class ToolStats(BaseModel):
+    name: str
+    calls: int
+    errors: int
+
+
+class UserStats(BaseModel):
+    email: str
+    total: int
+    mcp: int
+    chat: int
+
+
+class StatsOut(BaseModel):
+    window: Literal["15m", "1h", "24h"]
+    generated_at: datetime
+    total_calls: int
+    total_errors: int
+    servers: list[ServerStats]
+    top_tools: list[ToolStats]
+    top_error_tools: list[ToolStats]
+    users: list[UserStats]
+
+
 @router.get("/api/permissions", response_model=list[PermissionOut])
 async def list_permissions(request: Request, _: Principal = Depends(require_admin)):
     catalog = services(request).catalog
@@ -285,4 +333,74 @@ async def list_audit(
     return AuditPage(
         items=[AuditOut.model_validate(r, from_attributes=True) for r in rows],
         next_cursor=rows[-1].id if more else None,
+    )
+
+
+def _percentile(values: list[int], fraction: float) -> int:
+    if not values:
+        return 0
+    ordered = sorted(values)
+    return ordered[max(0, math.ceil(len(ordered) * fraction) - 1)]
+
+
+@router.get("/api/stats", response_model=StatsOut)
+async def stats(
+    request: Request,
+    window: Literal["15m", "1h", "24h"] = "1h",
+    _: Principal = Depends(require_admin),
+):
+    """Aggregate the durable audit log; Prometheus is not required for the dashboard."""
+    duration = {"15m": timedelta(minutes=15), "1h": timedelta(hours=1), "24h": timedelta(hours=24)}[window]
+    cutoff = datetime.now(UTC) - duration
+    async with services(request).db.session() as session:
+        rows = list(
+            (await session.scalars(select(AuditLog).where(AuditLog.ts >= cutoff).order_by(AuditLog.id.desc()))).all()
+        )
+
+    by_server: dict[str, list[AuditLog]] = defaultdict(list)
+    tool_calls: Counter[str] = Counter()
+    tool_errors: Counter[str] = Counter()
+    user_sources: dict[str, Counter[str]] = defaultdict(Counter)
+    for row in rows:
+        by_server[row.server_slug].append(row)
+        tool_calls[row.exposed_name] += 1
+        user_sources[row.user_email][row.source] += 1
+        if row.outcome != "success":
+            tool_errors[row.exposed_name] += 1
+
+    svc = services(request)
+    server_rows = []
+    for state in sorted(svc.catalog.servers.values(), key=lambda item: item.slug):
+        calls = by_server.get(state.slug, [])
+        errors = [row for row in calls if row.outcome != "success"]
+        last_error = next((row.error_message for row in calls if row.outcome != "success" and row.error_message), None)
+        server_rows.append(
+            ServerStats(
+                slug=state.slug,
+                name=state.name,
+                status=state.display_status,
+                status_since=state.status_since or state.last_checked_at,
+                calls=len(calls),
+                error_rate=round((len(errors) / len(calls) * 100) if calls else 0, 1),
+                p50_ms=_percentile([row.duration_ms for row in calls], 0.50),
+                p95_ms=_percentile([row.duration_ms for row in calls], 0.95),
+                last_error=last_error or state.last_error,
+            )
+        )
+
+    def tool_row(name: str) -> ToolStats:
+        return ToolStats(name=name, calls=tool_calls[name], errors=tool_errors[name])
+
+    return StatsOut(
+        window=window,
+        generated_at=datetime.now(UTC),
+        total_calls=len(rows),
+        total_errors=sum(row.outcome != "success" for row in rows),
+        servers=server_rows,
+        top_tools=[tool_row(name) for name, _ in tool_calls.most_common(10)],
+        top_error_tools=[tool_row(name) for name, _ in tool_errors.most_common(5)],
+        users=[
+            UserStats(email=email, total=sum(counts.values()), mcp=counts["mcp"], chat=counts["chat"])
+            for email, counts in sorted(user_sources.items(), key=lambda item: (-sum(item[1].values()), item[0]))
+        ],
     )

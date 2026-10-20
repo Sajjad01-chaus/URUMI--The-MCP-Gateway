@@ -3,8 +3,11 @@ import logging
 import os
 import socket
 
+from prometheus_client import start_http_server
+
 from ..config import get_settings
 from ..db import Database
+from ..metrics import ProvisionerMetrics
 from ..security import CredentialBox
 from .helm import HelmClient
 from .kubernetes import KubernetesClient
@@ -25,7 +28,11 @@ async def run() -> None:
         lease_seconds=settings.provisioner_lease_seconds,
         max_attempts=settings.provisioner_max_attempts,
     )
-    provisioner = Provisioner(settings, repository, HelmClient(settings), kube, CredentialBox(settings.credential_encryption_key))
+    metrics = ProvisionerMetrics()
+    start_http_server(settings.provisioner_metrics_port, addr="0.0.0.0", registry=metrics.registry)
+    provisioner = Provisioner(
+        settings, repository, HelmClient(settings), kube, CredentialBox(settings.credential_encryption_key), metrics
+    )
     try:
         await provisioner.run()
     finally:

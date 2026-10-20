@@ -11,6 +11,7 @@ from .audit import Auditor, args_preview
 from .auth import Principal
 from .catalog import Catalog, ToolUnavailable
 from .hub import SessionHub
+from .metrics import GatewayMetrics
 from .registry import target_for
 from .security import CredentialBox
 from .upstream import Connector, describe_error
@@ -43,7 +44,8 @@ def result_size(result: types.CallToolResult) -> int:
 
 
 def build_mcp_server(
-    catalog: Catalog, hub: SessionHub, auditor: Auditor, box: CredentialBox, connector: Connector, max_result_bytes: int,
+    catalog: Catalog, hub: SessionHub, auditor: Auditor, box: CredentialBox, connector: Connector,
+    metrics: GatewayMetrics, max_result_bytes: int,
 ) -> GatewayServer:
     def track(ctx: Any) -> None:
         request = ctx.request
@@ -98,10 +100,15 @@ def build_mcp_server(
             log.warning("call %s failed: %s", params.name, error)
             return error_result(error)
         finally:
+            duration = time.monotonic() - started
+            metric_server = slug if slug in catalog.servers else "unknown"
+            metric_tool = tool_name if metric_server != "unknown" else "unknown"
+            metrics.tool_calls.labels(metric_server, metric_tool, outcome, principal.source).inc()
+            metrics.tool_duration.labels(metric_server, outcome).observe(duration)
             await auditor.record(
                 user_id=principal.user_id, user_email=principal.email, api_key_id=principal.api_key_id,
                 source=principal.source, server_id=server_id, server_slug=slug or "-", tool_name=tool_name,
-                exposed_name=params.name, duration_ms=int((time.monotonic() - started) * 1000),
+                exposed_name=params.name, duration_ms=int(duration * 1000),
                 outcome=outcome, error_message=error, request_id=str(ctx.request_id),
                 client_name=(ctx.request.headers.get("user-agent", "")[:100] if ctx.request is not None else None),
                 args_preview=args_preview(params.arguments),
