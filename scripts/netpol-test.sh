@@ -73,8 +73,12 @@ kubectl -n "$STORE_NS" delete pod -l "$TEST_LABEL" --wait=true >/dev/null 2>&1 |
 echo "Starting test pods..."
 start_pod "$PLATFORM_NS" np-gateway gateway
 start_pod "$PLATFORM_NS" np-notes notes-mcp
+start_pod "$PLATFORM_NS" np-dashboard dashboard
+start_pod "$PLATFORM_NS" np-postgres postgres
 start_pod "$PLATFORM_NS" np-random
 start_pod "$STORE_NS" np-woo woo-mcp
+start_pod "$STORE_NS" np-wordpress wordpress
+start_pod "$STORE_NS" np-mysql mysql
 start_pod "$STORE_NS" np-bootstrap store-bootstrap
 start_pod "$STORE_NS" np-random
 if [[ -n "$TENANT_NS" ]]; then
@@ -96,7 +100,9 @@ probe "$PLATFORM_NS" np-gateway fx-mcp 8000 allowed
 probe "$PLATFORM_NS" np-gateway postgres 5432 allowed
 probe "$PLATFORM_NS" np-gateway api.groq.com 443 allowed
 probe "$STORE_NS" np-woo wordpress 80 allowed
+probe "$STORE_NS" np-wordpress mysql 3306 allowed
 probe "$STORE_NS" np-bootstrap mysql 3306 allowed
+probe "$STORE_NS" np-bootstrap api.github.com 443 allowed
 if [[ -n "$TENANT_NS" ]]; then
   probe "$PLATFORM_NS" np-gateway "woo-mcp.$TENANT_NS" 8000 allowed
   probe "$TENANT_NS" np-tenant-woo wordpress 80 allowed
@@ -121,6 +127,13 @@ probe "$STORE_NS" np-woo mysql 3306 denied
 probe "$STORE_NS" np-bootstrap wordpress 80 denied
 probe "$PLATFORM_NS" np-notes postgres 5432 denied
 probe "$PLATFORM_NS" np-notes "mysql.$STORE_NS" 3306 denied
+probe "$PLATFORM_NS" np-notes api.github.com 443 denied
+probe "$PLATFORM_NS" np-dashboard api.github.com 443 denied
+probe "$PLATFORM_NS" np-postgres api.github.com 443 denied
+probe "$STORE_NS" np-woo api.github.com 443 denied
+probe "$STORE_NS" np-wordpress api.github.com 443 denied
+probe "$STORE_NS" np-mysql wordpress 80 denied
+probe "$STORE_NS" np-mysql api.github.com 443 denied
 probe "$PLATFORM_NS" np-gateway "mysql.$STORE_NS" 3306 denied
 probe "$PLATFORM_NS" np-gateway "wordpress.$STORE_NS" 80 denied
 probe "$PLATFORM_NS" np-gateway kubernetes.default 443 denied

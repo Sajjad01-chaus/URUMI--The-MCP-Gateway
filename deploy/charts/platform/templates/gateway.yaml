@@ -75,6 +75,9 @@ spec:
             - name: CREDENTIAL_ENCRYPTION_KEY
               valueFrom:
                 secretKeyRef: { name: gateway-secrets, key: credential-encryption-key }
+            - name: CREDENTIAL_ENCRYPTION_KEYS
+              valueFrom:
+                secretKeyRef: { name: gateway-secrets, key: credential-encryption-key }
             - name: SESSION_SECRET
               valueFrom:
                 secretKeyRef: { name: gateway-secrets, key: session-secret }
@@ -114,6 +117,8 @@ spec:
               value: {{ .Values.llm.baseUrl | quote }}
             - name: LLM_MODEL
               value: {{ .Values.llm.model | quote }}
+            - name: CHAT_MAX_DIRECT_TOOLS
+              value: {{ .Values.chat.maxDirectTools | quote }}
             - name: LLM_API_KEY
               valueFrom:
                 secretKeyRef: { name: llm, key: api-key }
@@ -131,6 +136,12 @@ spec:
               value: {{ .Values.gateway.defaultCallTimeoutSeconds | quote }}
             - name: MAX_RESULT_BYTES
               value: {{ .Values.gateway.maxResultBytes | quote }}
+            - name: RATE_LIMIT_CALLS_PER_MINUTE
+              value: {{ .Values.gateway.rateLimit.callsPerMinute | quote }}
+            - name: RATE_LIMIT_BURST
+              value: {{ .Values.gateway.rateLimit.burst | quote }}
+            - name: RATE_LIMIT_HTTP_REQUESTS_PER_MINUTE
+              value: {{ .Values.gateway.rateLimit.httpRequestsPerMinute | quote }}
           ports:
             - name: http
               containerPort: 8000

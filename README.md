@@ -133,12 +133,13 @@ Step-by-step guide, including the Azure for Students pitfalls: [docs/vps-setup.m
 |---|---|---|
 | Stand-out 1: production VPS deployment + TLS | Done: k3s on Azure, Let's Encrypt via cert-manager, same charts, values-only changes | [docs/vps-setup.md](docs/vps-setup.md), `deploy/values/*/values-prod.yaml`, `scripts/deploy-prod.sh` |
 | Stand-out 2: tool permissions | Done: minimum role per tool (defaults from MCP annotations, admin overrides); hidden from `tools/list` **and** rejected on `tools/call` | `services/gateway/src/gateway/catalog.py`, dashboard **Tool permissions** page |
-| Stand-out 6: security hardening | Done: SSRF guard on upstream URLs (checked at save and at every connect), upstream credentials Fernet-encrypted at rest and write-only, default-deny ingress NetworkPolicies, gateway egress policy (no Kubernetes API, no cloud metadata), non-root read-only containers, upstream response-size cap | `services/gateway/src/gateway/ssrf.py`, `security.py`, `deploy/charts/*/templates/networkpolicies.yaml`, [threat model](docs/threat-model.md) |
+| Stand-out 6: security hardening | Done locally: SSRF checks, encrypted write-only credentials with documented online key rotation, namespace-wide default-deny ingress and egress, least-privilege allows, no workload service-account tokens except the provisioner, non-root read-only containers and upstream response-size caps | `services/gateway/src/gateway/ssrf.py`, `security.py`, `deploy/charts/*/templates/networkpolicies.yaml`, [threat model](docs/threat-model.md), [upgrade runbook](docs/upgrades.md) |
+| Stand-out 4: handling many tools | Done locally: `/mcp` remains compatible; `/mcp/search` exposes only permission-filtered BM25 search and delegated call meta-tools; chat switches automatically above the configured tool threshold | `services/gateway/src/gateway/catalog.py`, `mcp_gateway.py`, `scripts/phase10_6_gate.py` |
+| Stand-out 7 (partial): abuse controls | Done locally for one gateway replica: shared per-user tool-call token buckets, per-key HTTP limits, audit outcomes and bounded Prometheus counters; scale-out/shared session storage remains explicitly out of scope | `services/gateway/src/gateway/rate_limit.py`, `scripts/phase10_7_gate.py`, [v2 design](docs/design/v2-system-design.md) |
 | Stand-out 8: observability | Done locally: internal Prometheus metrics for calls, latency, health, sessions and provisioning; fixed failure classes; admin Stats page backed by the audit log | dashboard **Stats** page, `services/gateway/src/gateway/metrics.py`, `scripts/phase10_4_gate.py` |
 | Stand-out 9: upgrades and rollback | Done locally: immutable image tags and visible service versions; zero-failure rolling upgrade; bad-image automatic rollback; manual rollback and desired-revision restore | [docs/upgrades.md](docs/upgrades.md), `scripts/phase10_5_gate.py` |
 | Bonus: multi-store provisioning | Done locally: concurrent isolated stores, automatic MCP registration, Stores dashboard, quotas/recovery, unregister-before-teardown and tenant NetworkPolicy tests | `services/provisioner`, dashboard **Stores** page, `scripts/phase10_2_gate.py`, [v2 design](docs/design/v2-system-design.md) |
 | Stand-out 5: hosted MCP servers | Done locally: admin image deployment, allow-listed pinned images, encrypted write-only secrets, automatic registration, hardened isolated namespaces, failure diagnosis and clean teardown | `deploy/charts/hosted-mcp`, dashboard **Servers** page, `scripts/phase10_3_gate.py`, [v2 design](docs/design/v2-system-design.md) |
-| Remaining v2 stand-outs | In progress: tool search for many tools, egress lockdown + rate limits | [v2 design](docs/design/v2-system-design.md) |
 
 ---
 
@@ -146,9 +147,9 @@ Step-by-step guide, including the Azure for Students pitfalls: [docs/vps-setup.m
 
 | What | How | Result |
 |---|---|---|
-| Unit + integration | `uv run pytest` in each Python service | gateway 65, woo-mcp 13, notes-mcp 3, fx-mcp 3 |
+| Unit + integration | `uv run pytest` in each Python service | gateway 73, woo-mcp 13, notes-mcp 3, fx-mcp 3 |
 | Acceptance (demo script, design §15) | `bash scripts/acceptance.sh [domain] [--prod]` | 59/59 locally from an empty cluster and on production |
-| Network isolation | `bash scripts/netpol-test.sh [domain]` (part of acceptance) | v1 28/28; tenant-expanded gate 33/33 plus direct cross-tenant denials |
+| Network isolation | `bash scripts/netpol-test.sh [domain]` (part of acceptance) | full local default-deny matrix 37/37; tenant-expanded gate 33/33 plus direct cross-tenant denials |
 
 The acceptance script covers: storefront COD checkout, chat creating a product, orders today, invite + API key, cross-server prompt (woo → fx → notes), key revocation (401), disabling a server (`tools/list_changed`, direct call rejected), killing an upstream (others keep working), a slow upstream (20 s timeout, no retry), role-based tool permissions, unauthorized requests, SSRF rejection and the audit trail.
 

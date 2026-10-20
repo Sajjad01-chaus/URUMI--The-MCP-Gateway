@@ -267,3 +267,9 @@ async def test_rest_api_never_returns_credentials_and_members_cannot_edit(gw):
         assert (await http.post(f"{gw.url}/api/servers", json={"name": "x", "slug": "x", "url": "https://93.184.216.34/"}, headers=member)).status_code == 403
         ssrf = await http.post(f"{gw.url}/api/servers", json={"name": "m", "slug": "meta", "url": "http://169.254.169.254/"}, headers=admin)
         assert ssrf.status_code == 422 and "metadata" in ssrf.text
+        reserved = await http.post(
+            f"{gw.url}/api/servers",
+            json={"name": "Reserved", "slug": "gateway", "url": "https://93.184.216.34/mcp"},
+            headers=admin,
+        )
+        assert reserved.status_code == 422 and "reserved" in reserved.text

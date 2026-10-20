@@ -30,6 +30,7 @@ spec:
         checksum/script: {{ .Files.Get "files/bootstrap.sh" | sha256sum }}
     spec:
       restartPolicy: Never
+      automountServiceAccountToken: false
       # Same uid as Apache's www-data in the WordPress image, so file ownership matches.
       securityContext:
         runAsUser: 33

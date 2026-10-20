@@ -2,6 +2,7 @@
 
   python -m gateway.cli create-user EMAIL --role member|admin [--password PW]
   python -m gateway.cli create-api-key EMAIL [--name NAME]
+  python -m gateway.cli rotate-credential-key
 """
 
 import argparse
@@ -11,8 +12,8 @@ from sqlalchemy import select
 
 from .config import get_settings
 from .db import Database
-from .models import ApiKey, User
-from .security import generate_api_key, hash_password
+from .models import ApiKey, ManagedRelease, UpstreamServer, User
+from .security import CredentialBox, generate_api_key, hash_password
 
 
 async def create_user(db: Database, email: str, role: str, password: str | None) -> None:
@@ -35,6 +36,24 @@ async def create_api_key(db: Database, email: str, name: str) -> None:
     print(key)
 
 
+async def rotate_credential_key(db: Database, box: CredentialBox) -> None:
+    if box.key_count < 2:
+        raise SystemExit("rotation requires new,old keys in CREDENTIAL_ENCRYPTION_KEYS")
+    async with db.session() as session:
+        servers = list(
+            (await session.scalars(
+                select(UpstreamServer).where(UpstreamServer.credential_encrypted.is_not(None))
+            )).all()
+        )
+        releases = list((await session.scalars(select(ManagedRelease))).all())
+        for server in servers:
+            server.credential_encrypted = box.rotate(server.credential_encrypted)
+        for release in releases:
+            release.secrets_encrypted = box.rotate(release.secrets_encrypted)
+        await session.commit()
+    print(f"rotated {len(servers)} upstream credentials and {len(releases)} managed-release secrets")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(prog="gateway.cli")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -45,6 +64,7 @@ def main() -> None:
     key = sub.add_parser("create-api-key")
     key.add_argument("email")
     key.add_argument("--name", default="cli")
+    sub.add_parser("rotate-credential-key")
     args = parser.parse_args()
 
     async def run() -> None:
@@ -52,8 +72,10 @@ def main() -> None:
         try:
             if args.command == "create-user":
                 await create_user(db, args.email, args.role, args.password)
-            else:
+            elif args.command == "create-api-key":
                 await create_api_key(db, args.email, args.name)
+            else:
+                await rotate_credential_key(db, CredentialBox(get_settings().credential_keyring))
         finally:
             await db.dispose()
 

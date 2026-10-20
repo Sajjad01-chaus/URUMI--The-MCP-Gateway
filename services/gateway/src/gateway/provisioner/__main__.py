@@ -31,7 +31,7 @@ async def run() -> None:
     metrics = ProvisionerMetrics()
     start_http_server(settings.provisioner_metrics_port, addr="0.0.0.0", registry=metrics.registry)
     provisioner = Provisioner(
-        settings, repository, HelmClient(settings), kube, CredentialBox(settings.credential_encryption_key), metrics
+        settings, repository, HelmClient(settings), kube, CredentialBox(settings.credential_keyring), metrics
     )
     try:
         await provisioner.run()

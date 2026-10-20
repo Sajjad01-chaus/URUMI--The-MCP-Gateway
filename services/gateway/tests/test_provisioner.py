@@ -7,12 +7,14 @@ from unittest.mock import AsyncMock, Mock
 from cryptography.fernet import Fernet
 from sqlalchemy import select, update
 
+from gateway.cli import rotate_credential_key
 from gateway.config import Settings
 from gateway.db import Database
-from gateway.models import Base, ManagedRelease, User, utcnow
+from gateway.models import Base, ManagedRelease, UpstreamServer, User, utcnow
 from gateway.provisioner.helm import CommandResult, HelmClient, HelmError, mask
 from gateway.provisioner.repository import ReleaseRepository
 from gateway.provisioner.worker import Provisioner
+from gateway.security import CredentialBox
 
 
 def release(owner_id: uuid.UUID, slug: str = "london") -> ManagedRelease:
@@ -37,6 +39,34 @@ async def database(tmp_path) -> Database:
     async with db.engine.begin() as connection:
         await connection.run_sync(Base.metadata.create_all)
     return db
+
+
+async def test_credential_rotation_updates_upstreams_and_managed_secrets_atomically(tmp_path, capsys):
+    db = await database(tmp_path)
+    old_key, new_key = Fernet.generate_key().decode(), Fernet.generate_key().decode()
+    old_box = CredentialBox(old_key)
+    async with db.session() as session:
+        owner = User(email="owner@x.io", role="member")
+        session.add(owner)
+        await session.flush()
+        server = UpstreamServer(
+            slug="secured", name="Secured", url="https://example.com/mcp", auth_type="bearer",
+            credential_encrypted=old_box.encrypt("upstream-secret"),
+        )
+        managed = release(owner.id)
+        managed.secrets_encrypted = old_box.encrypt('{"database":"managed-secret"}')
+        session.add_all([server, managed])
+        await session.commit()
+        server_id, release_id = server.id, managed.id
+
+    await rotate_credential_key(db, CredentialBox(f"{new_key},{old_key}"))
+    async with db.session() as session:
+        server = await session.get(UpstreamServer, server_id)
+        managed = await session.get(ManagedRelease, release_id)
+        assert CredentialBox(new_key).decrypt(server.credential_encrypted) == "upstream-secret"
+        assert CredentialBox(new_key).decrypt(managed.secrets_encrypted) == '{"database":"managed-secret"}'
+    assert "rotated 1 upstream credentials and 1 managed-release secrets" in capsys.readouterr().out
+    await db.dispose()
 
 
 async def test_lease_claim_is_exclusive_and_expired_work_is_recovered(tmp_path):

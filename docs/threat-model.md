@@ -49,7 +49,7 @@ Boundaries: internet → Traefik; Traefik → gateway/dashboard/WordPress; gatew
 1. **Shared upstream identity.** Every member acts on the store through the same WooCommerce user (`mcp-bot`). A member with write access could cancel an order someone else created. Mitigations: write tools admin-only by default, scoped key, audit attributes every call to a person.
 2. **Malicious upstreams.** Annotations come from the upstream and can lie (a destructive tool marked read-only). Admin overrides exist, but a careless admin can still register a hostile server. v2: description length limits and scanning, human approval for destructive tools.
 3. **Admin compromise** gives full control. Mitigate operationally: few admins, strong passwords. v2: audit of admin actions, SSO/MFA.
-4. **No per-user rate limits** on tool calls (only the login throttle and per-upstream concurrency).
+4. Per-user and per-key rate limits are in memory because the gateway intentionally runs one replica. Scaling it out requires a shared limiter in Postgres or Redis.
 5. **Upstream response size is capped after decoding**: results over `gateway.maxResultBytes` (256 KiB) are replaced by a tool error before they reach a client, the model or the audit log. The gateway still reads the whole response into memory first, bounded only by the call timeout and the pod's memory limit.
 6. **Plain HTTP inside the cluster** (gateway → upstreams, woo-mcp → WordPress). Limited by NetworkPolicies; v2: mTLS or a service mesh.
 7. **WordPress and MySQL official images start as root** (they drop privileges internally); documented exception.

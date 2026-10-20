@@ -50,6 +50,7 @@ spec:
       labels: {{- include "store.labels" . | nindent 8 }}
         app.kubernetes.io/name: wordpress
     spec:
+      automountServiceAccountToken: false
       containers:
         - name: wordpress
           image: {{ .Values.wordpress.image }}

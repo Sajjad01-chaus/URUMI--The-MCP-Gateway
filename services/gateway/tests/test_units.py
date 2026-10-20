@@ -2,6 +2,7 @@ import pytest
 from mcp import types
 
 from gateway.catalog import Catalog, ToolUnavailable, UpstreamState, default_min_role, exposed_name
+from gateway.rate_limit import TokenBucketLimiter
 from gateway.security import CredentialBox, generate_api_key, hash_token
 from gateway.ssrf import UnsafeUrlError, check_upstream_url
 from gateway.upstream import Target, auth_headers
@@ -78,7 +79,22 @@ def test_credentials_encrypted_at_rest_and_rotatable():
     old, new = Fernet.generate_key().decode(), Fernet.generate_key().decode()
     token = CredentialBox(old).encrypt("s3cret")
     assert b"s3cret" not in token
-    assert CredentialBox(f"{new},{old}").decrypt(token) == "s3cret"
+    rotating = CredentialBox(f"{new},{old}")
+    assert rotating.decrypt(token) == "s3cret"
+    rotated = rotating.rotate(token)
+    assert CredentialBox(new).decrypt(rotated) == "s3cret"
+    with pytest.raises(ValueError, match="decrypt"):
+        CredentialBox(old).decrypt(rotated)
+
+
+def test_token_bucket_bursts_then_reports_retry_time():
+    now = [100.0]
+    limiter = TokenBucketLimiter(60, 2, clock=lambda: now[0])
+    assert limiter.consume("user") == 0
+    assert limiter.consume("user") == 0
+    assert limiter.consume("user") == pytest.approx(1)
+    now[0] += 0.5
+    assert limiter.consume("user") == pytest.approx(0.5)
 
 
 def test_gateway_sends_its_own_credential_never_the_callers():

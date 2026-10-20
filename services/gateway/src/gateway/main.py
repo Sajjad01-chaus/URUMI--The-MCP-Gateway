@@ -20,8 +20,9 @@ from .health import HealthMonitor
 from .hosted import router as hosted_router
 from .hub import SessionHub
 from .managed import router as managed_router
-from .mcp_gateway import build_mcp_server
+from .mcp_gateway import build_mcp_servers
 from .metrics import GatewayMetrics
+from .rate_limit import TokenBucketLimiter
 from .registry import Registry
 from .release_sync import ManagedReleaseSync
 from .security import CredentialBox
@@ -47,6 +48,8 @@ class Services:
     throttle: LoginThrottle
     chat: ChatAgent
     metrics: GatewayMetrics
+    tool_limiter: TokenBucketLimiter
+    http_limiter: TokenBucketLimiter
     chat_busy: set[uuid.UUID] = field(default_factory=set)
 
 
@@ -57,10 +60,15 @@ def create_app(
     if settings.uses_dev_secrets:
         log.warning("using built-in development signing secrets; set SESSION_SECRET and CHAT_TOKEN_SECRET")
     db = Database(settings.database_url)
-    box = CredentialBox(settings.credential_encryption_key)
+    box = CredentialBox(settings.credential_keyring)
     catalog = Catalog(settings.max_concurrent_calls_per_upstream)
     hub = SessionHub()
     metrics = GatewayMetrics()
+    tool_limiter = TokenBucketLimiter(settings.rate_limit_calls_per_minute, settings.rate_limit_burst)
+    http_limiter = TokenBucketLimiter(
+        settings.rate_limit_http_requests_per_minute,
+        settings.rate_limit_http_requests_per_minute,
+    )
     registry = Registry(db, box, settings, catalog)
     connector = connector or http_connector(settings.allowed_internal_host_patterns)
     monitor = HealthMonitor(
@@ -75,12 +83,13 @@ def create_app(
     chat_agent = ChatAgent(settings, llm or owned_llm)
     svc = Services(
         settings, db, box, catalog, hub, registry, monitor, release_sync,
-        resolve_api_key, LoginThrottle(), chat_agent, metrics,
+        resolve_api_key, LoginThrottle(), chat_agent, metrics, tool_limiter, http_limiter,
     )
 
     auditor = Auditor(db)
-    mcp_server = build_mcp_server(
-        catalog, hub, auditor, box, connector, metrics, settings.max_result_bytes, settings.app_version
+    mcp_server, search_server = build_mcp_servers(
+        catalog, hub, auditor, box, connector, metrics, tool_limiter,
+        settings.rate_limit_calls_per_minute, settings.max_result_bytes, settings.app_version,
     )
     mcp_app = mcp_server.streamable_http_app(
         transport_security=TransportSecuritySettings(
@@ -89,13 +98,25 @@ def create_app(
             allowed_origins=[],
         ),
     )
+    search_app = search_server.streamable_http_app(
+        streamable_http_path="/mcp/search",
+        transport_security=TransportSecuritySettings(
+            enable_dns_rebinding_protection=True,
+            allowed_hosts=settings.allowed_mcp_host_list,
+            allowed_origins=[],
+        ),
+    )
+
+    async def dispatch_mcp(scope, receive, send):
+        target = search_app if scope.get("path", "").startswith("/mcp/search") else mcp_app
+        await target(scope, receive, send)
 
     @contextlib.asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         await registry.bootstrap_admin()
         await registry.seed()
         await registry.load()
-        async with mcp_server.session_manager.run():
+        async with mcp_server.session_manager.run(), search_server.session_manager.run():
             tasks = (
                 [asyncio.create_task(monitor.run()), asyncio.create_task(release_sync.run())]
                 if run_monitor else []
@@ -118,5 +139,15 @@ def create_app(
     app.include_router(chat_router)
     app.include_router(managed_router)
     app.include_router(hosted_router)
-    app.mount("/", McpAuthMiddleware(mcp_app, [resolve_api_key, chat_token_resolver(db, settings.chat_token_secret)], hub, rejected_call_auditor(db, auditor)))
+    app.mount(
+        "/",
+        McpAuthMiddleware(
+            dispatch_mcp,
+            [resolve_api_key, chat_token_resolver(db, settings.chat_token_secret)],
+            hub,
+            http_limiter,
+            metrics,
+            rejected_call_auditor(db, auditor),
+        ),
+    )
     return app

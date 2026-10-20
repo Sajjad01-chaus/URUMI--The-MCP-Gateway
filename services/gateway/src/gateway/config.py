@@ -2,7 +2,7 @@ import json
 import tempfile
 from functools import lru_cache
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 from pydantic_settings import BaseSettings
 
 
@@ -28,7 +28,8 @@ class Settings(BaseSettings):
     """Runtime configuration from environment variables; secrets come from K8s Secrets."""
 
     database_url: str
-    credential_encryption_key: str
+    credential_encryption_key: str = ""
+    credential_encryption_keys: str = ""
     app_version: str = "dev"
     session_secret: str = DEV_SESSION_SECRET
     chat_token_secret: str = DEV_CHAT_SECRET
@@ -47,6 +48,7 @@ class Settings(BaseSettings):
     chat_token_ttl_seconds: int = 300
     chat_max_iterations: int = 6
     chat_max_tool_calls: int = 10
+    chat_max_direct_tools: int = Field(default=20, ge=1)
     chat_turn_timeout_seconds: float = 90.0
     chat_tool_result_chars: int = 4000
 
@@ -60,6 +62,9 @@ class Settings(BaseSettings):
     max_concurrent_calls_per_upstream: int = 10
     default_call_timeout_seconds: int = 20
     max_result_bytes: int = Field(default=256 * 1024, ge=1024)
+    rate_limit_calls_per_minute: int = Field(default=60, ge=1)
+    rate_limit_burst: int = Field(default=20, ge=1)
+    rate_limit_http_requests_per_minute: int = Field(default=600, ge=1)
 
     public_domain: str = "127-0-0-1.nip.io"
     public_scheme: str = "http"
@@ -88,6 +93,16 @@ class Settings(BaseSettings):
         if len(value) < MIN_SECRET_LENGTH:
             raise ValueError(f"must be at least {MIN_SECRET_LENGTH} characters")
         return value
+
+    @model_validator(mode="after")
+    def encryption_key_present(self):
+        if not self.credential_keyring:
+            raise ValueError("credential_encryption_key or credential_encryption_keys is required")
+        return self
+
+    @property
+    def credential_keyring(self) -> str:
+        return self.credential_encryption_keys.strip() or self.credential_encryption_key.strip()
 
     @property
     def uses_dev_secrets(self) -> bool:

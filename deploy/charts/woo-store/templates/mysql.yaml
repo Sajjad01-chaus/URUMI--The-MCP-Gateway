@@ -46,6 +46,7 @@ spec:
       labels: {{- include "store.labels" . | nindent 8 }}
         app.kubernetes.io/name: mysql
     spec:
+      automountServiceAccountToken: false
       containers:
         - name: mysql
           image: {{ .Values.mysql.image }}

@@ -1,5 +1,6 @@
 import json
 import logging
+import math
 import uuid
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
@@ -14,7 +15,9 @@ from .audit import Auditor, args_preview
 from .catalog import SEPARATOR
 from .db import Database
 from .hub import SessionHub
+from .metrics import GatewayMetrics
 from .models import ApiKey, User, utcnow
+from .rate_limit import TokenBucketLimiter
 from .security import API_KEY_PREFIX, hash_token
 from .sessions import read_token
 
@@ -140,10 +143,20 @@ class McpAuthMiddleware:
     MCP handlers read it from ctx.request.state.principal (verified for both protocol generations).
     """
 
-    def __init__(self, app: ASGIApp, resolvers: list[Resolver], hub: SessionHub, on_rejected: RejectedCall | None = None):
+    def __init__(
+        self,
+        app: ASGIApp,
+        resolvers: list[Resolver],
+        hub: SessionHub,
+        http_limiter: TokenBucketLimiter,
+        metrics: GatewayMetrics,
+        on_rejected: RejectedCall | None = None,
+    ):
         self.app = app
         self.resolvers = resolvers
         self.hub = hub
+        self.http_limiter = http_limiter
+        self.metrics = metrics
         self.on_rejected = on_rejected
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
@@ -162,6 +175,16 @@ class McpAuthMiddleware:
             if token and self.on_rejected and scope["method"] == "POST":
                 await self._audit_rejection(token, receive)
             await unauthorized("Send your gateway API key as 'Authorization: Bearer mcpgw_...'")(scope, receive, send)
+            return
+        limiter_key = principal.api_key_id or f"chat:{principal.user_id}"
+        retry_after = self.http_limiter.consume(limiter_key)
+        if retry_after:
+            self.metrics.rate_limited.labels("http").inc()
+            await JSONResponse(
+                {"error": "rate_limited", "error_description": "MCP request rate limit reached"},
+                status_code=429,
+                headers={"Retry-After": str(max(1, math.ceil(retry_after)))},
+            )(scope, receive, send)
             return
         if scope["method"] == "DELETE":
             self.hub.forget(headers.get("mcp-session-id"))

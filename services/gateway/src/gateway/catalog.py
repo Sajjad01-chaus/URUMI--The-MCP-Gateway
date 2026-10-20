@@ -1,8 +1,11 @@
 import asyncio
+import math
 import re
 import uuid
+from collections import Counter
 from dataclasses import dataclass, field
 from datetime import datetime
+from typing import Any
 
 from mcp import types
 
@@ -10,6 +13,7 @@ SEPARATOR = "__"
 SLUG_RE = re.compile(r"^[a-z0-9]+(-[a-z0-9]+)*$")
 TOOL_NAME_RE = re.compile(r"^[a-zA-Z0-9_-]{1,64}$")
 ROLE_RANK = {"member": 1, "admin": 2}
+TOKEN_RE = re.compile(r"[a-z0-9]+")
 
 
 class ToolUnavailable(Exception):
@@ -114,6 +118,52 @@ class Catalog:
                         )
                     )
         return result
+
+    def search_tools(self, role: str, query: str, server: str | None = None, limit: int = 8) -> list[dict[str, Any]]:
+        """Rank visible tools with BM25 over names, descriptions and parameter names."""
+        query_terms = set(TOKEN_RE.findall(query.lower()))
+        if not query_terms:
+            return []
+        documents: list[tuple[UpstreamState, types.Tool, list[str]]] = []
+        for state in sorted(self.servers.values(), key=lambda item: item.slug):
+            if not state.is_routable or (server and state.slug != server):
+                continue
+            for tool in state.tools:
+                if self.allowed(role, state.slug, tool):
+                    properties = tool.input_schema.get("properties", {})
+                    text = " ".join((state.slug, tool.name, tool.description or "", " ".join(properties)))
+                    documents.append((state, tool, TOKEN_RE.findall(text.lower())))
+        if not documents:
+            return []
+        average_length = sum(len(tokens) for _, _, tokens in documents) / len(documents)
+        frequencies = {term: sum(term in tokens for _, _, tokens in documents) for term in query_terms}
+
+        def score(tokens: list[str]) -> float:
+            counts = Counter(tokens)
+            length_factor = 1 - 0.75 + 0.75 * len(tokens) / max(average_length, 1)
+            total = 0.0
+            for term in query_terms:
+                frequency = counts[term]
+                if not frequency:
+                    continue
+                inverse = math.log(1 + (len(documents) - frequencies[term] + 0.5) / (frequencies[term] + 0.5))
+                total += inverse * frequency * 2.2 / (frequency + 1.2 * length_factor)
+            return total
+
+        ranked = sorted(
+            ((score(tokens), state, tool) for state, tool, tokens in documents),
+            key=lambda item: (-item[0], exposed_name(item[1].slug, item[2].name)),
+        )
+        return [
+            {
+                "name": exposed_name(state.slug, tool.name),
+                "server": state.slug,
+                "description": tool.description or "",
+                "input_schema": tool.input_schema,
+            }
+            for relevance, state, tool in ranked[:limit]
+            if relevance > 0
+        ]
 
     def visibility_signature(self) -> frozenset[tuple[str, str]]:
         """Changes whenever the set of routable tools changes (used to decide when to notify clients)."""

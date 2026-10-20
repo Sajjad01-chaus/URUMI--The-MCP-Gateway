@@ -46,6 +46,25 @@ helm rollback store-main <known-good-revision> -n store-main --wait --timeout 5m
 
 After rollback, confirm the displayed versions, call one tool from every upstream, inspect the audit log and run the acceptance and NetworkPolicy suites. PVC data is not removed by rollback.
 
+## Rotate the credential-encryption key
+
+The chart injects both `CREDENTIAL_ENCRYPTION_KEYS` and the one-release compatibility variable `CREDENTIAL_ENCRYPTION_KEY`. The Secret value may contain a comma-separated keyring; the first key encrypts and every listed key can decrypt.
+
+1. Back up Postgres and the current secrets file.
+2. Generate a Fernet key without printing it into shell history.
+3. Set `secrets.credentialEncryptionKey` to `new_key,old_key` and upgrade the platform. Verify all upstreams reconnect.
+4. Run this once inside the new gateway pod:
+
+   ```bash
+   python -m gateway.cli rotate-credential-key
+   ```
+
+   The command re-encrypts every upstream credential and managed-release secret in one database transaction and reports counts only.
+5. Set the Secret value to `new_key` only, upgrade again, and verify every upstream plus managed-store retry/deletion paths.
+6. Store the old key with the pre-rotation backup until the release is accepted, then retire it. A Helm rollback after step 5 uses the new key; rollback does not restore old ciphertext.
+
+If the command reports that a value cannot be rotated, the transaction rolls back completely. Restore the database/Secret pair from the same backup generation before retrying.
+
 ## Repeatable local demonstration
 
 `scripts/phase10_5_gate.py` creates two local tags for the same tested gateway image and demonstrates:

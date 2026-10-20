@@ -40,7 +40,11 @@ class CredentialBox:
     """
 
     def __init__(self, keys: str):
-        self._fernet = MultiFernet([Fernet(k.strip().encode()) for k in keys.split(",") if k.strip()])
+        key_list = [Fernet(k.strip().encode()) for k in keys.split(",") if k.strip()]
+        if not key_list:
+            raise ValueError("at least one credential encryption key is required")
+        self.key_count = len(key_list)
+        self._fernet = MultiFernet(key_list)
 
     def encrypt(self, plaintext: str) -> bytes:
         return self._fernet.encrypt(plaintext.encode())
@@ -50,3 +54,9 @@ class CredentialBox:
             return self._fernet.decrypt(token).decode()
         except InvalidToken as exc:
             raise ValueError("stored credential cannot be decrypted with the configured key") from exc
+
+    def rotate(self, token: bytes) -> bytes:
+        try:
+            return self._fernet.rotate(token)
+        except InvalidToken as exc:
+            raise ValueError("stored credential cannot be rotated with the configured keys") from exc

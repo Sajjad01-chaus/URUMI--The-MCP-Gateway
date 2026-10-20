@@ -28,6 +28,10 @@ gateway:
   defaultCallTimeoutSeconds: 20
   # Larger upstream tool results are replaced by an error (protects clients and the model's context).
   maxResultBytes: 262144
+  rateLimit:
+    callsPerMinute: 60
+    burst: 20
+    httpRequestsPerMinute: 600
   # SSRF guard: private addresses are allowed only for these host patterns.
   allowedInternalHosts: "*.store-*.svc.cluster.local,mcp.mcp-*.svc.cluster.local,*-mcp.platform.svc.cluster.local"
   seedServers:
@@ -84,6 +88,9 @@ hostedMcp:
 llm:
   baseUrl: https://api.groq.com/openai/v1
   model: openai/gpt-oss-120b
+
+chat:
+  maxDirectTools: 20
 
 dashboard:
   image: urumi/dashboard:dev

@@ -133,6 +133,8 @@ class Registry:
     async def create(self, data: ServerIn) -> UpstreamState:
         if not SLUG_RE.match(data.slug):
             raise RegistryError("slug must be lowercase letters, digits and single hyphens (e.g. 'woo', 'store-2')")
+        if data.slug == "gateway":
+            raise RegistryError("slug 'gateway' is reserved")
         validate_auth(data.auth_type, data.auth_header_name, data.credential, has_existing=False)
         await validate_url(data.url, self.settings)
         async with self.db.session() as session:
