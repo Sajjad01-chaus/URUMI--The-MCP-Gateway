@@ -3,20 +3,24 @@ import json
 import logging
 import time
 import uuid
-from collections.abc import AsyncIterator, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import AbstractAsyncContextManager, asynccontextmanager
+from datetime import datetime
 from typing import Any, Literal, Protocol
 
 import anyio
 import httpx2
 from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi.responses import StreamingResponse
 from mcp import Client, types
 from mcp.client.streamable_http import streamable_http_client
 from pydantic import BaseModel, Field, field_validator
+from sqlalchemy import delete, select
 
 from .auth import Principal
 from .config import Settings, llm_configured
 from .deps import current_principal, services
+from .models import ChatConversation, ChatRecord, utcnow
 from .sessions import issue_token
 from .upstream import describe_error
 
@@ -70,6 +74,45 @@ class ChatOut(BaseModel):
     answer: str
     tool_calls: list[ToolCallOut]
     stopped_reason: StopReason
+
+
+class ConversationIn(BaseModel):
+    title: str = Field(default="New conversation", min_length=1, max_length=120)
+
+
+class ConversationPatch(BaseModel):
+    title: str = Field(min_length=1, max_length=120)
+
+
+class ConversationOut(BaseModel):
+    id: uuid.UUID
+    title: str
+    created_at: datetime
+    updated_at: datetime
+
+
+class MessageOut(BaseModel):
+    id: int
+    role: Literal["user", "assistant"]
+    content: str
+    tool_calls: list[ToolCallOut]
+    stopped_reason: StopReason | None
+    created_at: datetime
+
+
+class ConversationDetail(ConversationOut):
+    messages: list[MessageOut]
+
+
+class PersistentTurnIn(BaseModel):
+    message: str = Field(min_length=1, max_length=4000)
+
+    @field_validator("message")
+    @classmethod
+    def meaningful_message(cls, message: str) -> str:
+        if not message.strip():
+            raise ValueError("message must not be blank")
+        return message.strip()
 
 
 class LLMError(Exception):
@@ -211,11 +254,17 @@ class ChatAgent:
     def __init__(self, settings: Settings, llm: LLM, connect: McpConnector = loopback_mcp):
         self.settings, self.llm, self.connect = settings, llm, connect
 
-    async def run(self, user_id: uuid.UUID, history: list[ChatMessage], mcp_url: str) -> ChatOut:
+    async def run(
+        self,
+        user_id: uuid.UUID,
+        history: list[ChatMessage],
+        mcp_url: str,
+        on_tool: Callable[[ToolCallOut], Awaitable[None]] | None = None,
+    ) -> ChatOut:
         records: list[ToolCallOut] = []
         try:
             with anyio.fail_after(self.settings.chat_turn_timeout_seconds):
-                return await self._loop(user_id, history, mcp_url, records)
+                return await self._loop(user_id, history, mcp_url, records, on_tool)
         except Exception as exc:
             # Errors raised inside the MCP client's task group arrive wrapped in an ExceptionGroup.
             cause = leaf_exception(exc)
@@ -235,7 +284,14 @@ class ChatAgent:
                 stopped_reason="error",
             )
 
-    async def _loop(self, user_id: uuid.UUID, history: list[ChatMessage], mcp_url: str, records: list[ToolCallOut]) -> ChatOut:
+    async def _loop(
+        self,
+        user_id: uuid.UUID,
+        history: list[ChatMessage],
+        mcp_url: str,
+        records: list[ToolCallOut],
+        on_tool: Callable[[ToolCallOut], Awaitable[None]] | None,
+    ) -> ChatOut:
         s = self.settings
         token = issue_token(user_id, s.chat_token_secret, s.chat_token_ttl_seconds, "chat")
         async with self.connect(mcp_url, token) as client:
@@ -281,7 +337,10 @@ class ChatAgent:
                         if malformed > 1:
                             return stop("malformed_tool_call", "The model produced an invalid tool call twice. Please rephrase your request.")
                         error = f"Error: the arguments for {name} were not a valid JSON object. Try again with valid JSON."
-                        records.append(ToolCallOut(name=name, arguments=None, result=error, is_error=True, duration_ms=0))
+                        record = ToolCallOut(name=name, arguments=None, result=error, is_error=True, duration_ms=0)
+                        records.append(record)
+                        if on_tool:
+                            await on_tool(record)
                         messages.append({"role": "tool", "tool_call_id": call.get("id", ""), "content": error})
                         continue
 
@@ -293,10 +352,13 @@ class ChatAgent:
                     except Exception as exc:
                         log.warning("chat tool call %s failed: %s", name, describe_error(exc))
                         text, is_error = f"Error: the call to {name} failed: {describe_error(exc)}", True
-                    records.append(ToolCallOut(
+                    record = ToolCallOut(
                         name=name, arguments=arguments, result=text, is_error=is_error,
                         duration_ms=int((time.monotonic() - started) * 1000),
-                    ))
+                    )
+                    records.append(record)
+                    if on_tool:
+                        await on_tool(record)
                     messages.append({"role": "tool", "tool_call_id": call.get("id", ""), "content": text})
 
             return stop("max_iterations", f"I stopped after {s.chat_max_iterations} model steps without a final answer. "
@@ -333,3 +395,246 @@ async def chat(data: ChatIn, request: Request, principal: Principal = Depends(cu
         principal.email, len(result.tool_calls), result.stopped_reason, int((time.monotonic() - started) * 1000),
     )
     return result
+
+
+def conversation_out(row: ChatConversation) -> ConversationOut:
+    return ConversationOut(id=row.id, title=row.title, created_at=row.created_at, updated_at=row.updated_at)
+
+
+def message_out(row: ChatRecord) -> MessageOut:
+    return MessageOut(
+        id=row.id,
+        role=row.role,
+        content=row.content,
+        tool_calls=[ToolCallOut.model_validate(call) for call in (row.tool_calls or [])],
+        stopped_reason=row.stopped_reason,
+        created_at=row.created_at,
+    )
+
+
+def require_dashboard(principal: Principal) -> None:
+    if principal.source != "dashboard":
+        raise HTTPException(403, "chat is only available from a dashboard session")
+
+
+async def owned_conversation(request: Request, principal: Principal, conversation_id: uuid.UUID) -> ChatConversation:
+    async with services(request).db.session() as session:
+        row = await session.scalar(
+            select(ChatConversation).where(
+                ChatConversation.id == conversation_id,
+                ChatConversation.user_id == principal.user_id,
+            )
+        )
+    if row is None:
+        raise HTTPException(404, "conversation not found")
+    return row
+
+
+@router.get("/api/chat/conversations", response_model=list[ConversationOut])
+async def list_conversations(request: Request, principal: Principal = Depends(current_principal)):
+    require_dashboard(principal)
+    async with services(request).db.session() as session:
+        rows = (
+            await session.scalars(
+                select(ChatConversation)
+                .where(ChatConversation.user_id == principal.user_id)
+                .order_by(ChatConversation.updated_at.desc())
+                .limit(50)
+            )
+        ).all()
+    return [conversation_out(row) for row in rows]
+
+
+@router.post("/api/chat/conversations", response_model=ConversationOut, status_code=201)
+async def create_conversation(
+    data: ConversationIn,
+    request: Request,
+    principal: Principal = Depends(current_principal),
+):
+    require_dashboard(principal)
+    row = ChatConversation(user_id=principal.user_id, title=data.title.strip())
+    async with services(request).db.session() as session:
+        session.add(row)
+        await session.commit()
+    return conversation_out(row)
+
+
+@router.get("/api/chat/conversations/{conversation_id}", response_model=ConversationDetail)
+async def get_conversation(
+    conversation_id: uuid.UUID,
+    request: Request,
+    principal: Principal = Depends(current_principal),
+):
+    require_dashboard(principal)
+    row = await owned_conversation(request, principal, conversation_id)
+    async with services(request).db.session() as session:
+        messages = (
+            await session.scalars(
+                select(ChatRecord)
+                .where(ChatRecord.conversation_id == row.id)
+                .order_by(ChatRecord.id)
+            )
+        ).all()
+    return ConversationDetail(**conversation_out(row).model_dump(), messages=[message_out(message) for message in messages])
+
+
+@router.patch("/api/chat/conversations/{conversation_id}", response_model=ConversationOut)
+async def rename_conversation(
+    conversation_id: uuid.UUID,
+    data: ConversationPatch,
+    request: Request,
+    principal: Principal = Depends(current_principal),
+):
+    require_dashboard(principal)
+    async with services(request).db.session() as session:
+        row = await session.scalar(
+            select(ChatConversation).where(
+                ChatConversation.id == conversation_id,
+                ChatConversation.user_id == principal.user_id,
+            )
+        )
+        if row is None:
+            raise HTTPException(404, "conversation not found")
+        row.title = data.title.strip()
+        row.updated_at = utcnow()
+        await session.commit()
+    return conversation_out(row)
+
+
+@router.delete("/api/chat/conversations/{conversation_id}", status_code=204)
+async def delete_conversation(
+    conversation_id: uuid.UUID,
+    request: Request,
+    principal: Principal = Depends(current_principal),
+):
+    require_dashboard(principal)
+    async with services(request).db.session() as session:
+        row = await session.scalar(
+            select(ChatConversation).where(
+                ChatConversation.id == conversation_id,
+                ChatConversation.user_id == principal.user_id,
+            )
+        )
+        if row is None:
+            raise HTTPException(404, "conversation not found")
+        await session.execute(delete(ChatRecord).where(ChatRecord.conversation_id == row.id))
+        await session.delete(row)
+        await session.commit()
+
+
+def sse(event: str, payload: Any) -> str:
+    return f"event: {event}\ndata: {json.dumps(payload, default=str, separators=(',', ':'))}\n\n"
+
+
+@router.post("/api/chat/conversations/{conversation_id}/turns")
+async def stream_turn(
+    conversation_id: uuid.UUID,
+    data: PersistentTurnIn,
+    request: Request,
+    principal: Principal = Depends(current_principal),
+):
+    require_dashboard(principal)
+    svc = services(request)
+    if not llm_configured(svc.settings):
+        raise HTTPException(503, "Chat is not configured: an admin must set the LLM API key (secrets.groqApiKey).")
+    if principal.user_id in svc.chat_busy:
+        raise HTTPException(429, "A chat turn is already running for you; wait for it to finish.")
+
+    svc.chat_busy.add(principal.user_id)
+    content = data.message.strip()
+    try:
+        async with svc.db.session() as session:
+            conversation = await session.scalar(
+                select(ChatConversation).where(
+                    ChatConversation.id == conversation_id,
+                    ChatConversation.user_id == principal.user_id,
+                )
+            )
+            if conversation is None:
+                raise HTTPException(404, "conversation not found")
+            existing = (
+                await session.scalars(
+                    select(ChatRecord)
+                    .where(ChatRecord.conversation_id == conversation.id)
+                    .order_by(ChatRecord.id.desc())
+                    .limit(39)
+                )
+            ).all()
+            user_message = ChatRecord(conversation_id=conversation.id, role="user", content=content)
+            session.add(user_message)
+            if not existing and conversation.title == "New conversation":
+                conversation.title = truncate(content.replace("\n", " "), 72)
+            conversation.updated_at = utcnow()
+            await session.commit()
+            history = [ChatMessage(role=row.role, content=row.content) for row in reversed(existing)]
+            history.append(ChatMessage(role="user", content=content))
+            title = conversation.title
+    except BaseException:
+        svc.chat_busy.discard(principal.user_id)
+        raise
+
+    port = (request.scope.get("server") or ("127.0.0.1", 8000))[1]
+    mcp_path = "/mcp/search" if len(svc.catalog.visible_tools(principal.role)) > svc.settings.chat_max_direct_tools else "/mcp"
+    mcp_url = f"http://127.0.0.1:{port}{mcp_path}"
+    queue: asyncio.Queue[tuple[str, Any] | None] = asyncio.Queue()
+
+    async def on_tool(call: ToolCallOut) -> None:
+        await queue.put(("tool", call.model_dump(mode="json")))
+
+    async def produce() -> None:
+        started = time.monotonic()
+        try:
+            result = await svc.chat.run(principal.user_id, history, mcp_url, on_tool=on_tool)
+            async with svc.db.session() as session:
+                conversation = await session.get(ChatConversation, conversation_id)
+                if conversation and conversation.user_id == principal.user_id:
+                    message = ChatRecord(
+                        conversation_id=conversation_id,
+                        role="assistant",
+                        content=result.answer,
+                        tool_calls=[call.model_dump(mode="json") for call in result.tool_calls],
+                        stopped_reason=result.stopped_reason,
+                    )
+                    session.add(message)
+                    conversation.updated_at = utcnow()
+                    await session.commit()
+                    message_id = message.id
+                else:
+                    message_id = None
+            for start in range(0, len(result.answer), 48):
+                await queue.put(("delta", {"text": result.answer[start:start + 48]}))
+                await asyncio.sleep(0)
+            await queue.put(("done", {"message_id": message_id, "stopped_reason": result.stopped_reason}))
+            log.info(
+                "streamed chat turn by %s: %d tool calls, stopped=%s, %d ms",
+                principal.email,
+                len(result.tool_calls),
+                result.stopped_reason,
+                int((time.monotonic() - started) * 1000),
+            )
+        finally:
+            svc.chat_busy.discard(principal.user_id)
+            await queue.put(None)
+
+    async def events() -> AsyncIterator[str]:
+        task: asyncio.Task[None] | None = None
+        try:
+            yield sse("conversation", {"id": str(conversation_id), "title": title, "user_message_id": user_message.id})
+            task = asyncio.create_task(produce())
+            while True:
+                item = await queue.get()
+                if item is None:
+                    break
+                yield sse(*item)
+            await task
+        finally:
+            if task and not task.done():
+                task.cancel()
+                await asyncio.gather(task, return_exceptions=True)
+            svc.chat_busy.discard(principal.user_id)
+
+    return StreamingResponse(
+        events(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache, no-transform", "X-Accel-Buffering": "no"},
+    )

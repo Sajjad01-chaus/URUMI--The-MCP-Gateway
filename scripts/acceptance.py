@@ -36,6 +36,9 @@ APP, MCP_URL, STORE = f"{SCHEME}://app.{DOMAIN}", f"{SCHEME}://mcp.{DOMAIN}/mcp"
 ALICE, BOB = "alice@urumi.test", "bob@urumi.test"
 XRW = {"X-Requested-With": "acceptance"}
 PRODUCT = "Urumi Mug"
+CHAT_COOLDOWN_SECONDS = int(os.environ.get("ACCEPTANCE_CHAT_COOLDOWN_SECONDS", "5"))
+if not 0 <= CHAT_COOLDOWN_SECONDS <= 300:
+    raise ValueError("ACCEPTANCE_CHAT_COOLDOWN_SECONDS must be between 0 and 300")
 
 
 class AcceptanceError(Exception):
@@ -64,6 +67,7 @@ class World:
     alice: httpx2.AsyncClient
     bob: httpx2.AsyncClient
     alice_key: str = ""
+    alice_key_id: str = ""
     bob_key: str = ""
     bob_key_id: str = ""
     first_order: int = 0
@@ -229,7 +233,7 @@ async def setup(w: World, r: Report) -> None:
     r.check("bootstrap admin login", True)
     passwords = demo_passwords()
     await ensure_user(w, w.admin, w.alice, ALICE, "admin", passwords[ALICE], "Alice", r)
-    w.alice_key, _ = await new_key(w.alice, "acceptance-alice")
+    w.alice_key, w.alice_key_id = await new_key(w.alice, "acceptance-alice")
     r.check("alice created an API key (dashboard session)", w.alice_key.startswith("mcpgw_"), w.alice_key[:12] + "…")
 
 
@@ -294,7 +298,7 @@ async def step7_bob_client(w: World, r: Report) -> None:
 
 
 async def step8_cross_server(w: World, r: Report) -> None:
-    await asyncio.sleep(5)
+    await asyncio.sleep(CHAT_COOLDOWN_SECONDS)
     body = await chat(w.bob, "Summarise today's orders, convert the total revenue to EUR and save the summary as a note")
     for tool in ("woo__list_orders", "fx__convert_currency", "notes__create_note"):
         r.check(f"cross-server: {tool}", bool(successful(body, tool)))
@@ -456,6 +460,18 @@ STEPS: list[tuple[str, Callable[[World, Report], Awaitable[None]]]] = [
 ]
 
 
+async def cleanup_keys(world: World, report: Report) -> None:
+    report.step = "cleanup"
+    for client, key_id, label in (
+        (world.alice, world.alice_key_id, "alice acceptance key revoked"),
+        (world.bob, world.bob_key_id, "bob acceptance key revoked"),
+    ):
+        if not key_id:
+            continue
+        response = await client.delete(f"/api/keys/{key_id}", headers=XRW)
+        report.check(label, response.status_code in (204, 404), response.status_code)
+
+
 async def main() -> int:
     report = Report()
     started = time.monotonic()
@@ -465,13 +481,16 @@ async def main() -> int:
         httpx2.AsyncClient(base_url=APP, timeout=60) as bob,
     ):
         world = World(admin=admin, alice=alice, bob=bob)
-        for name, step in STEPS:
-            report.step = name
-            print(f"\n=== {name}")
-            try:
-                await step(world, report)
-            except (AcceptanceError, httpx2.HTTPError, KeyError, ValueError, subprocess.TimeoutExpired) as exc:
-                report.check("step aborted", False, f"{type(exc).__name__}: {exc}")
+        try:
+            for name, step in STEPS:
+                report.step = name
+                print(f"\n=== {name}")
+                try:
+                    await step(world, report)
+                except (AcceptanceError, httpx2.HTTPError, KeyError, ValueError, subprocess.TimeoutExpired) as exc:
+                    report.check("step aborted", False, f"{type(exc).__name__}: {exc}")
+        finally:
+            await cleanup_keys(world, report)
     failed = report.failed()
     print(f"\n{len(report.rows) - len(failed)}/{len(report.rows)} checks passed in {time.monotonic() - started:.0f} s")
     for step, label, _, detail in failed:

@@ -1,6 +1,6 @@
 # Urumi MCP Gateway — v2 System Design
 
-> Status: **approved; Phases 10.0–10.7 complete locally; Phase 11 release preparation next** (updated 2026-10-20). The external Groq-backed acceptance rerun remains approval-gated; v2 builds on top of the implemented and deployed v1.
+> Status: **approved; Phases 10.0–10.8 complete locally; Phase 11 release is next** (updated 2026-10-21). The exact final Phase 10.8 images passed 59/59 acceptance and 37/37 isolation; v2 builds on top of the implemented and deployed v1.
 > [v1-system-design.md](v1-system-design.md) stays **frozen** as the original plan. This document only describes **what changes**; anything not mentioned here works exactly as v1 says.
 > Deadline: **2026-10-22**. Feature freeze: **2026-10-21 12:00 IST** (§16).
 
@@ -632,6 +632,18 @@ Upstream tool results larger than `gateway.maxResultBytes` (default 256 KiB) are
 | notes-mcp PVC | 256 Mi PVC instead of `emptyDir` → notes and ids survive restarts and the kill test |
 | Chat renders Markdown tables | extend the dashboard's Markdown renderer (tables only; still no raw HTML) |
 | Response-size cap | moved here from D because it closes a documented v1 gap (§11.4) |
+
+### 12.1 Phase 10.8 correction: persisted streaming chat
+
+The user reopened the feature freeze on 2026-10-20 for one bounded UX correction:
+
+- PostgreSQL stores user-owned conversations and user/assistant messages; ownership is checked on every list, read, rename and delete.
+- A new SSE turn endpoint persists the user message before work, emits each completed tool call, progressively delivers the final answer, and persists the assistant result with its tool records and stop reason.
+- The existing non-streaming `/api/chat` contract remains compatible with the acceptance suite.
+- The dashboard adds conversation resume/rename/delete, streamed tool chips and answer text, and a compact auto-growing composer kept above the bottom edge.
+- The chat agent still calls the gateway's own loopback MCP endpoint, so permissions, rate limits and audit behavior do not fork.
+
+Cut line: no attachments, branching, sharing, full-text search or cross-user access. Provider token streaming may replace the final-answer chunking later without changing the browser SSE contract.
 | `ruff` config in each `pyproject.toml` | rules we actually follow, FastAPI `Depends` B008 + pytest fixture false positives ignored → lint enforced in CI |
 | CI | `.github/workflows/ci.yml`: ruff + pytest + `tsc` + `helm lint` on every push |
 
@@ -716,6 +728,7 @@ v1 phases 0–9 keep their numbers; v2 is **Phase 10** (sub-phases), then **Phas
 | **10.5 Upgrade/rollback** | Oct 20 | versions, `docs/upgrades.md`, rollback script | good, bad (auto-rollback) and manual rollback shown with zero failed calls |
 | **10.6 Many tools** | Oct 21 AM | meta-tools, `/mcp/search`, chat auto mode | many-tools checks pass; chat answers via search |
 | **10.7 Security completion** | Oct 21 AM | egress lockdown, rate limits, key rotation | netpol + rate-limit checks pass |
+| **10.8 Persisted streaming chat** | Oct 20 PM | conversation/message migration, user-owned CRUD, SSE turns, history UI and compact composer | refresh/resume/rename/delete and streamed tool/answer events pass; complete regression gate passes |
 | ✂ **Feature freeze** | **Oct 21 12:00 IST** | anything not through its gate is cut and documented as designed-not-built | — |
 | **11. Release** | Oct 21 PM | GHCR images, prod deploy (staging certs for tenant testing, then prod), full acceptance on prod, docs updated (README, trade-offs, threat model), video recorded, form submitted | submitted |
 | Buffer | Oct 22 | fixes only | — |
@@ -755,6 +768,7 @@ Detailed script goes into `docs/demo-script.md` (updated in Phase 11).
 | ADR-24 | Keyword (BM25) tool search, not embeddings | Deterministic, no extra model or service, explainable | Weaker on synonyms; tool descriptions are short and literal, so acceptable |
 | ADR-25 | Rate limits per user in memory | One gateway replica (ADR-12) | Must move to shared storage before scaling out |
 | ADR-26 | Hosted images: registry allowlist, non-root enforced, no SA token, egress off by default | Admin-supplied image = untrusted code | Some public images won't run without changes; they fail with a clear reason |
+| ADR-27 | Persist chat in Postgres and stream browser events over authenticated POST + SSE | Ownership and durability stay server-side; POST keeps CSRF protection and carries the user message safely | Provider completion still finishes before final answer chunks are emitted; tool completion events are live |
 
 ---
 
@@ -780,6 +794,5 @@ Detailed script goes into `docs/demo-script.md` (updated in Phase 11).
 |---|---|
 | **OAuth on the gateway** (stand-out 3) | Different purpose from our JWTs: OAuth is a standard *flow* that lets a third-party client get a token through a browser login instead of a copy-pasted API key. Building a correct authorization server (discovery metadata, dynamic client registration, PKCE, consent, token issuing and revocation) is ~1–1.5 days and adds a security-critical surface late in the project. API keys already meet the brief. |
 | **Multiple gateway replicas** (stand-out 7) | MCP Streamable HTTP sessions, the tool catalog, health state and rate-limit buckets live in one process's memory (ADR-12). Scaling out needs sticky sessions or a shared session store plus catalog sync, and it is hard to show convincingly in a demo. The provisioner's lease design (§5.5) is already replica-safe. |
-| Chat streaming, persisted conversations | UX only; not graded |
 | Sealed Secrets / SOPS | secrets are generated on the VM and never leave it; documented |
 | Store-provisioning as chat tools (`platform__create_store`) | would let the model create infrastructure; needs its own permission design |

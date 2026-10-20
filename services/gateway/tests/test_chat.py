@@ -1,5 +1,6 @@
 import asyncio
 import json
+import uuid
 from typing import Any
 
 import httpx2
@@ -11,7 +12,7 @@ from test_team import XRW, logged_in
 
 from gateway.chat import LLMError, MalformedToolCall, OpenAICompatibleLLM, compact_schema
 from gateway.config import Settings
-from gateway.models import User
+from gateway.models import ChatConversation, ChatRecord, User
 from gateway.sessions import issue_token
 
 
@@ -49,6 +50,16 @@ def use_llm(gw):
 
 async def ask(http: httpx2.AsyncClient, text: str) -> httpx2.Response:
     return await http.post("/api/chat", json={"messages": [{"role": "user", "content": text}]}, headers=XRW, timeout=30)
+
+
+def sse_events(response: httpx2.Response) -> list[tuple[str, dict]]:
+    events = []
+    for block in response.text.replace("\r\n", "\n").strip().split("\n\n"):
+        lines = block.splitlines()
+        event = next(line[7:] for line in lines if line.startswith("event: "))
+        data = "\n".join(line[6:] for line in lines if line.startswith("data: "))
+        events.append((event, json.loads(data)))
+    return events
 
 
 async def test_chat_creates_product_as_the_user_and_audits_source_chat(gw, use_llm):
@@ -171,6 +182,102 @@ async def test_chat_tokens_work_on_mcp_only_with_the_right_type(gw):
         ):
             response = await http.post(f"{gw.url}/mcp", json=ping, headers={"Authorization": f"Bearer {token}"})
             assert response.status_code == 401
+
+
+async def test_persisted_streaming_conversation_lifecycle_and_ownership(gw, use_llm):
+    use_llm(FakeLLM(
+        {"content": "", "tool_calls": [tool_call("woo__list_orders", {})]},
+        {"content": "Order 15 came in today."},
+    ))
+    async with logged_in(gw, "alice@x.io") as alice:
+        created = await alice.post("/api/chat/conversations", json={"title": "New conversation"}, headers=XRW)
+        assert created.status_code == 201
+        conversation_id = created.json()["id"]
+        conversation_uuid = uuid.UUID(conversation_id)
+
+        streamed = await alice.post(
+            f"/api/chat/conversations/{conversation_id}/turns",
+            json={"message": "What orders came in today?"},
+            headers=XRW,
+            timeout=30,
+        )
+        assert streamed.status_code == 200
+        assert streamed.headers["content-type"].startswith("text/event-stream")
+        events = sse_events(streamed)
+        assert [name for name, _ in events] == ["conversation", "tool", "delta", "done"]
+        assert events[0][1]["title"] == "What orders came in today?"
+        assert events[1][1]["name"] == "woo__list_orders"
+        assert events[2][1]["text"] == "Order 15 came in today."
+        assert events[3][1]["stopped_reason"] == "answered"
+
+        detail = (await alice.get(f"/api/chat/conversations/{conversation_id}")).json()
+        assert [(message["role"], message["content"]) for message in detail["messages"]] == [
+            ("user", "What orders came in today?"),
+            ("assistant", "Order 15 came in today."),
+        ]
+        assert detail["messages"][1]["tool_calls"][0]["name"] == "woo__list_orders"
+        listing = (await alice.get("/api/chat/conversations")).json()
+        assert listing[0]["id"] == conversation_id and listing[0]["title"] == "What orders came in today?"
+
+        renamed = await alice.patch(
+            f"/api/chat/conversations/{conversation_id}", json={"title": "Today's orders"}, headers=XRW
+        )
+        assert renamed.status_code == 200 and renamed.json()["title"] == "Today's orders"
+
+    async with logged_in(gw, "bob@x.io") as bob:
+        assert (await bob.get(f"/api/chat/conversations/{conversation_id}")).status_code == 404
+        assert (
+            await bob.patch(
+                f"/api/chat/conversations/{conversation_id}", json={"title": "stolen"}, headers=XRW
+            )
+        ).status_code == 404
+        assert (await bob.delete(f"/api/chat/conversations/{conversation_id}", headers=XRW)).status_code == 404
+
+    async with logged_in(gw, "alice@x.io") as alice:
+        assert (await alice.delete(f"/api/chat/conversations/{conversation_id}", headers=XRW)).status_code == 204
+        assert (await alice.get(f"/api/chat/conversations/{conversation_id}")).status_code == 404
+    async with gw.svc.db.session() as session:
+        assert await session.get(ChatConversation, conversation_uuid) is None
+        assert not (await session.scalars(select(ChatRecord).where(ChatRecord.conversation_id == conversation_uuid))).all()
+
+
+async def test_persisted_chat_guards_and_history_limit(gw, use_llm):
+    use_llm(FakeLLM({"content": "ok"}))
+    async with logged_in(gw, "alice@x.io") as alice:
+        created = (await alice.post("/api/chat/conversations", json={"title": "New conversation"}, headers=XRW)).json()
+        assert (
+            await alice.post(
+                f"/api/chat/conversations/{created['id']}/turns", json={"message": "   "}, headers=XRW
+            )
+        ).status_code == 422
+        assert (
+            await alice.post(
+                f"/api/chat/conversations/{created['id']}/turns", json={"message": "hello"}
+            )
+        ).status_code == 403
+    async with httpx2.AsyncClient(base_url=gw.url, headers={"Authorization": f"Bearer {gw.admin_key}"}) as by_key:
+        assert (await by_key.get("/api/chat/conversations")).status_code == 403
+
+
+async def test_persisted_chat_busy_guard_is_atomic_and_released(gw, use_llm):
+    async def slow() -> dict:
+        await asyncio.sleep(0.2)
+        return {"content": "done"}
+
+    use_llm(FakeLLM(slow))
+    async with logged_in(gw, "alice@x.io") as alice:
+        created = (await alice.post(
+            "/api/chat/conversations", json={"title": "Concurrency"}, headers=XRW
+        )).json()
+        url = f"/api/chat/conversations/{created['id']}/turns"
+        first, second = await asyncio.gather(
+            alice.post(url, json={"message": "one"}, headers=XRW, timeout=30),
+            alice.post(url, json={"message": "two"}, headers=XRW, timeout=30),
+        )
+        assert sorted((first.status_code, second.status_code)) == [200, 429]
+        assert not gw.svc.chat_busy
+        assert (await alice.post(url, json={"message": "three"}, headers=XRW, timeout=30)).status_code == 200
+        assert not gw.svc.chat_busy
 
 
 def test_compact_schema_drops_title_keywords_but_keeps_title_properties():

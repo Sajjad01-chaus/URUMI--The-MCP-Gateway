@@ -4,7 +4,7 @@ A **team MCP gateway** on Kubernetes, with a WooCommerce store as its first data
 
 - An **admin** registers MCP servers once in a dashboard (URL + optional credential).
 - Every **team member** connects any MCP client (Claude Code, Cursor, MCP Inspector) to **one gateway URL with their own API key** and sees the tools of every enabled server.
-- A **chat agent** in the dashboard uses the same gateway, acting as the logged-in user.
+- A **persisted streaming chat agent** in the dashboard uses the same gateway, acting as the logged-in user.
 - The store's MCP server (`woo-mcp`) is written here and is reachable **only** by the gateway.
 - Everything is deployed with **Helm**: locally on **k3d**, in production on **k3s on an Azure VM**, with only values changing.
 
@@ -49,7 +49,7 @@ flowchart LR
 
 | Component | What it does |
 |---|---|
-| `services/gateway` | Python 3.12, FastAPI, official `mcp` SDK. Dashboard REST API, auth (sessions, API keys, chat tokens), upstream registry with Fernet-encrypted credentials, health monitor, tool catalog, `/mcp` aggregation + routing, tool permissions, audit log, chat agent |
+| `services/gateway` | Python 3.12, FastAPI, official `mcp` SDK. Dashboard REST API, auth (sessions, API keys, chat tokens), upstream registry with Fernet-encrypted credentials, health monitor, tool catalog, `/mcp` aggregation + routing, tool permissions, audit log, persisted SSE chat agent |
 | `services/woo-mcp` | MCP server (FastMCP, Streamable HTTP) over the WooCommerce REST API: `get_store_info`, `list_products`, `create_product`, `list_orders`, `get_order`, `update_order_status` |
 | `services/notes-mcp`, `services/fx-mcp` | Two more upstreams: bearer vs header credentials, a deliberate tool-name collision (`search`), fault injection for the slow-upstream test |
 | `services/dashboard` | React + Vite + TypeScript SPA served by unprivileged nginx |
@@ -96,7 +96,8 @@ Then open:
    - *"Create a product called Urumi Mug for 12.50"* (admins only by default: `create_product` is a write tool)
    - *"What orders came in today?"*
    - *"Summarise today's orders with the total in EUR and save it as a note"* (woo → fx → notes)
-3. Each answer shows the tools it called as chips (arguments, result, duration). Open **Audit log**: every call is there under your user with source `chat`.
+3. Tool chips appear as calls finish and the final answer streams into the page. Conversations survive refreshes and gateway restarts; use the history rail to resume, rename or delete them.
+4. Open **Audit log**: every tool call is there under your user with source `chat`.
 
 The agent calls the gateway's own `/mcp` endpoint with a 5-minute token for the logged-in user, so it sees exactly the tools your role allows, no more.
 
@@ -119,7 +120,7 @@ The dashboard's **Connect a client** page has ready snippets for Claude Code, Cu
 
 Same two charts; only `deploy/values/*/values-prod.yaml`, the secrets file and the image location differ.
 
-- **Images:** `.github/workflows/images.yml` builds the 5 images on every push to `main` and publishes them to GHCR, tagged with the commit SHA.
+- **Images:** `.github/workflows/images.yml` builds the 6 images on every push to `main` and publishes them to GHCR, tagged with the commit SHA.
 - **VM:** Azure B2as_v2 (2 vCPU, 8 GB), Ubuntu 24.04, k3s v1.35.5 (same as local), Traefik, cert-manager + Let's Encrypt (HTTP-01).
 - **Deploy:** `bash scripts/deploy-prod.sh <image-sha>` on the VM (preflight checks, issuers, both `helm upgrade --install`).
 
@@ -147,7 +148,7 @@ Step-by-step guide, including the Azure for Students pitfalls: [docs/vps-setup.m
 
 | What | How | Result |
 |---|---|---|
-| Unit + integration | `uv run pytest` in each Python service | gateway 73, woo-mcp 13, notes-mcp 3, fx-mcp 3 |
+| Unit + integration | `uv run pytest` in each Python service | gateway 76, woo-mcp 13, notes-mcp 3, fx-mcp 3 |
 | Acceptance (demo script, design §15) | `bash scripts/acceptance.sh [domain] [--prod]` | 59/59 locally from an empty cluster and on production |
 | Network isolation | `bash scripts/netpol-test.sh [domain]` (part of acceptance) | full local default-deny matrix 37/37; tenant-expanded gate 33/33 plus direct cross-tenant denials |
 

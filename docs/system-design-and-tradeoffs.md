@@ -17,7 +17,7 @@ The first upstream is `woo-mcp`, our MCP server for a WooCommerce store running 
 
 **Client tool call:** client → Traefik → gateway `/mcp` → API key verified (SHA-256 lookup, revocation checked on every request) → `woo__list_orders` split into slug `woo` + tool `list_orders` → server enabled? caller's role allowed? → per-upstream semaphore → new MCP session to `woo-mcp` with the gateway's bearer token, 20 s timeout → result returned → audit row (user, key, server, tool, duration, outcome).
 
-**Chat:** browser → `POST /api/chat` (session cookie) → gateway mints a 5-minute chat token for the user → opens an MCP session to its own `/mcp` with that token → LLM loop (max 6 iterations, 10 tool calls, 90 s, results truncated to 4 KB) → answer + list of tool calls. Every call is audited with `source=chat`.
+**Chat:** browser → persisted conversation + `POST /api/chat/conversations/{id}/turns` (session cookie, SSE response) → user message committed to Postgres → gateway mints a 5-minute chat token for the user → opens an MCP session to its own `/mcp` or compact `/mcp/search` surface with that token → LLM loop (max 6 iterations, 10 tool calls, 90 s, results truncated to 4 KB) → completed tool events and final-answer chunks stream to the browser → assistant message committed. Every tool call is audited with `source=chat`. The legacy `POST /api/chat` remains compatible with the acceptance runner.
 
 **Store:** woo-mcp → WooCommerce REST API v3 on the in-cluster Service, with a scoped API key for a dedicated `shop_manager` user (`mcp-bot`), never the admin.
 
@@ -40,7 +40,7 @@ The first upstream is `woo-mcp`, our MCP server for a WooCommerce store running 
 | **SSRF guard + gateway egress NetworkPolicy** | Admin-entered URLs are checked at save and at every connection; the network blocks metadata, the Kubernetes API and databases even if the app check fails | Internal upstreams need an explicit host allowlist |
 | **Own minimal StatefulSets for MySQL and Postgres (no Bitnami)** | Explainable YAML; Bitnami images moved behind a paid catalogue | We own tuning and backups |
 | **Single gateway replica** | Stateful MCP sessions (for `list_changed`) and an in-memory catalog | No high availability |
-| **Non-streaming chat** | Saves build time while still showing every tool call | No progress while a turn runs |
+| **Postgres-owned conversations + authenticated POST/SSE turns** | History survives refreshes/restarts, ownership is enforced server-side, and completed tools appear while the agent works | The provider completion currently finishes before the final answer is emitted in chunks; the SSE contract can later carry native token deltas unchanged |
 | **nip.io locally, DuckDNS + Let's Encrypt in production** | No hosts-file edits; free public TLS | Depends on public DNS |
 
 ## 4. Decisions made while building and operating it
@@ -68,7 +68,8 @@ The first upstream is `woo-mcp`, our MCP server for a WooCommerce store running 
 ## 6. Limits and next steps
 
 - **Availability:** single node and single gateway replica; the VM is a single point of failure. Next: shared session store and catalog so the gateway can scale out.
-- **Backups:** database data lives on the VM disk; backups are documented, not automated.
+- **Backups:** database data lives on the VM disk; the production deploy now takes verified database/Secret/Helm backups automatically before an upgrade, but off-VM scheduling is still an operator task.
 - **Upstream response size** is capped after decoding (256 KiB, `gateway.maxResultBytes`); the read itself is bounded only by the timeout and the pod memory limit.
 - **Delivered in v2 locally:** multi-store provisioning with `helm upgrade --install`, automatic MCP registration, concurrent recovery and clean teardown; see [v2-system-design.md](design/v2-system-design.md).
-- **Backlog:** chat streaming, persisted conversations, Prometheus metrics and default-deny egress for every workload.
+- **Delivered in v2 locally:** persisted user-owned chat with SSE tool/answer events, internal Prometheus metrics, a Stats page, and namespace-wide default-deny ingress/egress.
+- **Backlog:** native provider token streaming, shared sessions/catalog/rate limits for multiple gateway replicas, mTLS/service mesh and scheduled off-VM backups.

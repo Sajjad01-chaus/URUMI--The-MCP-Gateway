@@ -11,7 +11,7 @@ The definition of done (design §15), as a recording plan for the demo video. Ta
 | 0 | Architecture diagram (README) | One gateway in front of many MCP servers; nothing but the gateway talks to upstreams. |
 | 1 | `https://store.<d>`: add a product to the cart, checkout with **Cash on Delivery**; the order in WP admin | WooCommerce runs in the cluster with persistent MySQL and WordPress volumes. |
 | 2 | Dashboard as alice → **Servers**: woo, notes, fx **Connected** with tool counts | The admin registered servers once; credentials are write-only and encrypted. |
-| 3 | **Chat** (alice): "Create a product called Urumi Mug priced 12.50" → expand the `woo__create_product` chip → product on the storefront | The chat agent calls the gateway's own MCP endpoint as alice. |
+| 3 | **Chat** (alice): start a conversation, "Create a product called Urumi Mug priced 12.50" → watch the completed-tool chip appear and the answer stream → refresh and resume the same conversation | Chat history is persisted in Postgres; the agent calls the gateway's own MCP endpoint as alice. |
 | 4 | Buy Urumi Mug on the storefront | — |
 | 5 | **Chat**: "What orders came in today?" → `woo__list_orders {period: today}` | "Today" is computed in the store's timezone by the server, not guessed by the LLM. |
 | 6 | **Members**: invite bob (copy link) → private window: accept → **API keys**: create a key (shown once) | Keys are stored only as SHA-256 hashes. |

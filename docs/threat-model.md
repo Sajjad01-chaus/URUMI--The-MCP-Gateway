@@ -11,6 +11,7 @@ Scope: the gateway, its dashboard, the upstream MCP servers and the WooCommerce 
 | Store data: orders, customers, products | MySQL in `store-main` |
 | The ability to act on the store (create products, change order status) | woo-mcp tools, reachable only through the gateway |
 | Audit trail | Postgres `audit_log` |
+| Private chat conversations and messages | Postgres, keyed to the owning user |
 | LLM API key | Kubernetes Secret, gateway only |
 
 ## 2. Actors and trust boundaries
@@ -28,7 +29,7 @@ Boundaries: internet → Traefik; Traefik → gateway/dashboard/WordPress; gatew
 
 ## 3. Threats and mitigations
 
-| # | Threat | Mitigation in v1 | Verified by |
+| # | Threat | Mitigation | Verified by |
 |---|---|---|---|
 | T1 | **Stolen or leaked API key** | Keys are shown once and stored only as SHA-256; revocation is checked on **every** `/mcp` request; audit shows each call with key id and client name | Acceptance step 9 (revoke → next call 401) |
 | T2 | **Token passthrough / confused deputy**: client tokens forwarded to upstreams | Client keys stop at the gateway; upstreams only ever see the gateway's own credential for them | Design rule; upstream `_meta` is stripped so upstream identity doesn't leak back either |
@@ -40,9 +41,11 @@ Boundaries: internet → Traefik; Traefik → gateway/dashboard/WordPress; gatew
 | T8 | **Dashboard session theft / CSRF** | Signed session cookie, `HttpOnly`, `SameSite=Lax`, `Secure` in production; mutating requests need JSON plus an `X-Requested-With` header | Acceptance: cookie write without the header → 403 |
 | T9 | **Password guessing** | argon2id hashes; per-email login throttle (429 after 5 failures) | Re-verification 2026-10-15 |
 | T10 | **Slow or dead upstream used to exhaust the gateway** | Per-call timeout (20 s), per-upstream concurrency limit, health monitor hides unreachable servers, no retries | Acceptance steps 11–12 |
-| T11 | **Lateral movement inside the cluster** | Default-deny ingress in both namespaces; explicit allow rules only (Traefik → apps, gateway → upstreams and Postgres, WordPress → MySQL, woo-mcp → WordPress); containers we build run as non-root with a read-only root filesystem and no capabilities | netpol-test 28/28 |
+| T11 | **Lateral movement inside the cluster** | Namespace-wide default-deny ingress and egress with explicit dependency/DNS allows; gateway cannot reach MySQL, WordPress, Kubernetes or cloud metadata; service-account tokens are disabled except for the isolated provisioner; built containers run non-root with read-only roots and no capabilities | netpol-test 37/37 |
 | T12 | **Secrets in git, logs or screenshots** | Secrets generated per environment and gitignored; production secrets generated on the VM with `chmod 600`; logs never contain passwords, tokens or full keys | Log scan for all secret values (none found); git history scanned before publishing |
 | T13 | **Exposed VM** | Only 80/443 public; SSH key-only and restricted to one source IP; Kubernetes API (6443) not exposed | Azure network security group |
+| T14 | **Cross-user chat-history access** | Every conversation read, update, delete and turn query includes the authenticated user's id; message access is only through an owned conversation; deleting a user/conversation cascades to its messages | Phase 10.8 ownership tests and deployed create/restart/read/delete gate |
+| T15 | **Chat data exposed through streaming/cache intermediaries** | Mutating stream requests retain JSON + `X-Requested-With` CSRF protection; SSE responses set no-cache/no-transform and are authenticated by the signed session cookie | Phase 10.8 API tests |
 
 ## 4. Residual risks (accepted in v1)
 
@@ -53,4 +56,5 @@ Boundaries: internet → Traefik; Traefik → gateway/dashboard/WordPress; gatew
 5. **Upstream response size is capped after decoding**: results over `gateway.maxResultBytes` (256 KiB) are replaced by a tool error before they reach a client, the model or the audit log. The gateway still reads the whole response into memory first, bounded only by the call timeout and the pod's memory limit.
 6. **Plain HTTP inside the cluster** (gateway → upstreams, woo-mcp → WordPress). Limited by NetworkPolicies; v2: mTLS or a service mesh.
 7. **WordPress and MySQL official images start as root** (they drop privileges internally); documented exception.
-8. **Single node, no automated backups**: availability and data loss risk, not confidentiality.
+8. **Single node** remains an availability risk. Production upgrades take automatic verified local backups, but scheduled off-VM backup retention is not implemented.
+9. **Chat retention:** conversations persist until the owning user deletes them or the user is deleted; there is no automatic expiry policy yet.

@@ -1,19 +1,23 @@
 import { useEffect, useRef, useState, type FormEvent, type KeyboardEvent, type ReactNode } from "react";
 
-import { api, type ChatMessage, type ChatToolCall, type StopReason } from "../api";
+import {
+  api,
+  type ChatConversation,
+  type ChatStreamEvent,
+  type ChatToolCall,
+  type PersistedChatMessage,
+  type StopReason,
+} from "../api";
 import { useCurrentUser } from "../auth";
-import { ErrorBanner, PageHeader, useAction } from "../ui";
+import { ErrorBanner, PageHeader, messageOf, useAction, useLoad } from "../ui";
 
 interface Entry {
+  id: string;
   role: "user" | "assistant";
   content: string;
-  toolCalls?: ChatToolCall[];
-  stoppedReason?: StopReason;
+  toolCalls: ChatToolCall[];
+  stoppedReason: StopReason | null;
 }
-
-// The server is stateless: only the last turns are sent back as context (keeps LLM token use low).
-const HISTORY_SENT = 20;
-const STORAGE_KEY = "urumi.chat";
 
 const STOP_NOTES: Partial<Record<StopReason, string>> = {
   max_iterations: "Stopped: step limit reached for this turn.",
@@ -24,38 +28,43 @@ const STOP_NOTES: Partial<Record<StopReason, string>> = {
   error: "Stopped: internal error.",
 };
 
-function loadEntries(userId: string): Entry[] {
-  try {
-    const saved = JSON.parse(sessionStorage.getItem(STORAGE_KEY) ?? "null") as { userId: string; entries: Entry[] } | null;
-    return saved?.userId === userId ? saved.entries : [];
-  } catch {
-    return [];
-  }
-}
-
-function saveEntries(userId: string, entries: Entry[]): void {
-  try {
-    sessionStorage.setItem(STORAGE_KEY, JSON.stringify({ userId, entries }));
-  } catch {
-    // Storage can be full or blocked; the conversation still works for this page view.
-  }
+function entry(message: PersistedChatMessage): Entry {
+  return {
+    id: String(message.id), role: message.role, content: message.content,
+    toolCalls: message.tool_calls, stoppedReason: message.stopped_reason,
+  };
 }
 
 export default function ChatPage() {
   const user = useCurrentUser();
-  const [entries, setEntries] = useState<Entry[]>(() => loadEntries(user.id));
+  const { data: conversations, error: loadError, reload, setData: setConversations } = useLoad(api.chatConversations);
+  const { busy, error, setError, run } = useAction();
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [fresh, setFresh] = useState(false);
+  const [entries, setEntries] = useState<Entry[]>([]);
   const [draft, setDraft] = useState("");
-  const { busy, error, run } = useAction();
   const endRef = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLTextAreaElement>(null);
 
-  // Block bodies on purpose: an effect must return nothing or a clean-up function, and
-  // scrollIntoView() returns a Promise in newer browsers, which React would try to call on unmount.
   useEffect(() => {
-    saveEntries(user.id, entries);
-  }, [user.id, entries]);
+    if (fresh || selectedId || !conversations?.length) return;
+    const id = conversations[0].id;
+    setSelectedId(id);
+    void api.chatConversation(id)
+      .then((conversation) => setEntries(conversation.messages.map(entry)))
+      .catch((cause) => setError(messageOf(cause)));
+  }, [conversations, fresh, selectedId, setError]);
+
   useEffect(() => {
     endRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
   }, [entries, busy]);
+
+  useEffect(() => {
+    const input = inputRef.current;
+    if (!input) return;
+    input.style.height = "auto";
+    input.style.height = `${Math.min(input.scrollHeight, 144)}px`;
+  }, [draft]);
 
   const suggestions = [
     "What orders came in today?",
@@ -63,32 +72,120 @@ export default function ChatPage() {
     user.role === "admin" ? "Create a product called Urumi Mug priced 12.50" : "List the products in the store",
   ];
 
-  const send = async (text: string) => {
-    const content = text.trim();
-    if (!content || busy) return;
-    const next: Entry[] = [...entries, { role: "user", content }];
-    setEntries(next);
+  const openConversation = async (id: string) => {
+    if (busy || id === selectedId) return;
+    setFresh(false);
+    setSelectedId(id);
+    const conversation = await run(() => api.chatConversation(id));
+    if (conversation) setEntries(conversation.messages.map(entry));
+  };
+
+  const newConversation = () => {
+    if (busy) return;
+    setFresh(true);
+    setSelectedId(null);
+    setEntries([]);
     setDraft("");
-    const history: ChatMessage[] = next.slice(-HISTORY_SENT).map(({ role, content }) => ({ role, content }));
-    const turn = await run(() => api.chat(history));
-    if (turn) {
-      setEntries([...next, { role: "assistant", content: turn.answer, toolCalls: turn.tool_calls, stoppedReason: turn.stopped_reason }]);
-    } else {
-      // The request failed (not configured, busy, network): don't leave an unanswered question in the
-      // history, or the model answers it later out of context. Put it back in the input to retry.
-      setEntries(entries);
-      setDraft(content);
+    setError(null);
+    window.setTimeout(() => inputRef.current?.focus(), 0);
+  };
+
+  const updateStreamingAssistant = (change: (current: Entry) => Entry) => {
+    setEntries((current) => {
+      const next = [...current];
+      const last = next[next.length - 1];
+      if (last?.role === "assistant" && last.id === "streaming") next[next.length - 1] = change(last);
+      return next;
+    });
+  };
+
+  const handleStream = (event: ChatStreamEvent) => {
+    if (event.event === "conversation") {
+      setConversations((current) => {
+        const row: ChatConversation = {
+          id: event.data.id, title: event.data.title,
+          created_at: new Date().toISOString(), updated_at: new Date().toISOString(),
+        };
+        return [row, ...(current ?? []).filter((item) => item.id !== row.id)];
+      });
+    } else if (event.event === "tool") {
+      updateStreamingAssistant((current) => ({ ...current, toolCalls: [...current.toolCalls, event.data] }));
+    } else if (event.event === "delta") {
+      updateStreamingAssistant((current) => ({ ...current, content: current.content + event.data.text }));
+    } else if (event.event === "done") {
+      updateStreamingAssistant((current) => ({
+        ...current,
+        id: event.data.message_id === null ? current.id : String(event.data.message_id),
+        stoppedReason: event.data.stopped_reason,
+      }));
     }
   };
 
-  const submit = (e: FormEvent) => {
-    e.preventDefault();
+  const send = async (text: string) => {
+    const content = text.trim();
+    if (!content || busy) return;
+    setDraft("");
+    const previous = entries;
+    const completedId = await run(async () => {
+      let id = selectedId;
+      if (!id) {
+        const created = await api.createChatConversation();
+        id = created.id;
+        setSelectedId(id);
+        setFresh(false);
+        setConversations((current) => [created, ...(current ?? [])]);
+      }
+      setEntries([
+        ...previous,
+        { id: `user-${Date.now()}`, role: "user", content, toolCalls: [], stoppedReason: null },
+        { id: "streaming", role: "assistant", content: "", toolCalls: [], stoppedReason: null },
+      ]);
+      await api.streamChatTurn(id, content, handleStream);
+      return id;
+    });
+    if (completedId) {
+      await reload();
+      return;
+    }
+    setDraft(content);
+    if (selectedId) {
+      try {
+        const persisted = await api.chatConversation(selectedId);
+        setEntries(persisted.messages.map(entry));
+      } catch {
+        setEntries(previous);
+      }
+    } else {
+      setEntries(previous);
+    }
+  };
+
+  const renameConversation = async (conversation: ChatConversation) => {
+    const title = window.prompt("Conversation title", conversation.title)?.trim();
+    if (!title || title === conversation.title) return;
+    const updated = await run(() => api.renameChatConversation(conversation.id, title));
+    if (updated) setConversations((current) => current?.map((row) => row.id === updated.id ? updated : row));
+  };
+
+  const deleteConversation = async (conversation: ChatConversation) => {
+    if (!window.confirm(`Delete “${conversation.title}”? This cannot be undone.`)) return;
+    const removed = await run(async () => {
+      await api.deleteChatConversation(conversation.id);
+      return true;
+    });
+    if (!removed) return;
+    setConversations((current) => current?.filter((row) => row.id !== conversation.id));
+    if (selectedId === conversation.id) newConversation();
+  };
+
+  const submit = (event: FormEvent) => {
+    event.preventDefault();
     void send(draft);
   };
 
-  const onKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
-    if (e.key === "Enter" && !e.shiftKey) {
-      e.preventDefault();
+  const onKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
+    if (event.key === "Enter" && !event.shiftKey) {
+      event.preventDefault();
       void send(draft);
     }
   };
@@ -97,57 +194,77 @@ export default function ChatPage() {
     <div className="chat-page">
       <PageHeader
         title="Chat"
-        subtitle={`The assistant calls gateway tools as you (${user.role}); every call is in the audit log with source "chat".`}
-        actions={entries.length > 0 && (
-          <button className="button" disabled={busy} onClick={() => setEntries([])}>New chat</button>
-        )}
+        subtitle={`Persistent conversations; tools run as you (${user.role}) and remain visible in the audit log.`}
+        actions={<button className="button button-primary" disabled={busy} onClick={newConversation}>New chat</button>}
       />
 
-      <div className="chat-log card">
-        {entries.length === 0 && (
-          <div className="empty">
-            <p>Ask about orders, products, notes or currencies.</p>
-            <div className="chips" style={{ justifyContent: "center" }}>
-              {suggestions.map((s) => (
-                <button key={s} className="button button-small" onClick={() => void send(s)}>{s}</button>
-              ))}
+      <ErrorBanner message={error ?? loadError} />
+      <div className="chat-workspace card">
+        <aside className="chat-history" aria-label="Conversation history">
+          <div className="chat-history-title">Conversations</div>
+          {conversations?.map((conversation) => (
+            <div key={conversation.id} className={`chat-history-row ${selectedId === conversation.id ? "active" : ""}`}>
+              <button className="chat-history-open" onClick={() => void openConversation(conversation.id)}>
+                <span>{conversation.title}</span>
+                <small>{new Date(conversation.updated_at).toLocaleDateString()}</small>
+              </button>
+              <div className="chat-history-actions">
+                <button className="icon-button" aria-label={`Rename ${conversation.title}`} onClick={() => void renameConversation(conversation)}>✎</button>
+                <button className="icon-button" aria-label={`Delete ${conversation.title}`} onClick={() => void deleteConversation(conversation)}>×</button>
+              </div>
             </div>
-          </div>
-        )}
-        {entries.map((entry, i) => (
-          <div key={i} className={`chat-entry chat-${entry.role}`}>
-            {entry.toolCalls && entry.toolCalls.length > 0 && (
-              <div className="tool-calls">
-                {entry.toolCalls.map((call, j) => <ToolCallChip key={j} call={call} />)}
+          ))}
+          {conversations?.length === 0 && <div className="small muted chat-history-empty">No saved conversations yet.</div>}
+        </aside>
+
+        <section className="chat-main">
+          <div className="chat-log">
+            {entries.length === 0 && (
+              <div className="empty chat-empty">
+                <p>Ask about orders, products, notes or currencies.</p>
+                <div className="chips" style={{ justifyContent: "center" }}>
+                  {suggestions.map((suggestion) => (
+                    <button key={suggestion} className="button button-small" onClick={() => void send(suggestion)}>{suggestion}</button>
+                  ))}
+                </div>
               </div>
             )}
-            <div className="bubble">{entry.role === "assistant" ? renderLite(entry.content) : entry.content}</div>
-            {entry.stoppedReason && STOP_NOTES[entry.stoppedReason] && (
-              <div className="cell-sub">{STOP_NOTES[entry.stoppedReason]}</div>
-            )}
+            {entries.map((item) => (
+              <div key={item.id} className={`chat-entry chat-${item.role}`}>
+                {item.toolCalls.length > 0 && (
+                  <div className="tool-calls">
+                    {item.toolCalls.map((call, index) => <ToolCallChip key={`${call.name}-${index}`} call={call} />)}
+                  </div>
+                )}
+                <div className="bubble">
+                  {item.role === "assistant"
+                    ? item.content ? renderLite(item.content) : <span className="muted">Working…</span>
+                    : item.content}
+                </div>
+                {item.stoppedReason && STOP_NOTES[item.stoppedReason] && (
+                  <div className="cell-sub">{STOP_NOTES[item.stoppedReason]}</div>
+                )}
+              </div>
+            ))}
+            <div ref={endRef} />
           </div>
-        ))}
-        {busy && (
-          <div className="chat-entry chat-assistant">
-            <div className="bubble muted">Working… (calling tools as needed)</div>
-          </div>
-        )}
-        <div ref={endRef} />
-      </div>
 
-      <ErrorBanner message={error} />
-      <form className="chat-input" onSubmit={submit}>
-        <textarea
-          rows={2}
-          maxLength={4000}
-          placeholder="Message the assistant (Enter to send, Shift+Enter for a new line)"
-          value={draft}
-          onChange={(e) => setDraft(e.target.value)}
-          onKeyDown={onKeyDown}
-          aria-label="Chat message"
-        />
-        <button className="button button-primary" disabled={busy || !draft.trim()}>Send</button>
-      </form>
+          <form className="chat-input" onSubmit={submit}>
+            <textarea
+              ref={inputRef}
+              rows={1}
+              maxLength={4000}
+              placeholder="Message the assistant"
+              value={draft}
+              onChange={(event) => setDraft(event.target.value)}
+              onKeyDown={onKeyDown}
+              aria-label="Chat message"
+            />
+            <button className="button button-primary" disabled={busy || !draft.trim()}>Send</button>
+            <div className="chat-input-hint">Enter to send · Shift+Enter for a new line</div>
+          </form>
+        </section>
+      </div>
     </div>
   );
 }
@@ -170,23 +287,20 @@ function ToolCallChip({ call }: { call: ChatToolCall }) {
   );
 }
 
-/**
- * Minimal Markdown for model answers: ```code blocks```, | tables |, **bold** and `code`.
- * Builds React elements (never innerHTML), so text from tools can't inject HTML or scripts.
- */
 function renderLite(text: string): ReactNode[] {
-  return text.split(/```(?:[a-z]*\n)?([\s\S]*?)```/g).map((part, i) =>
-    i % 2 === 1 ? <pre key={i} className="answer-code">{part.replace(/\n$/, "")}</pre> : <span key={i}>{withTables(part)}</span>,
+  return text.split(/```(?:[a-z]*\n)?([\s\S]*?)```/g).map((part, index) =>
+    index % 2 === 1
+      ? <pre key={index} className="answer-code">{part.replace(/\n$/, "")}</pre>
+      : <span key={index}>{withTables(part)}</span>,
   );
 }
 
 const TABLE_SEPARATOR = /^\s*\|?\s*:?-{3,}:?\s*(\|\s*:?-{3,}:?\s*)*\|?\s*$/;
 
 function cells(line: string): string[] {
-  return line.trim().replace(/^\|/, "").replace(/\|$/, "").split("|").map((c) => c.trim());
+  return line.trim().replace(/^\|/, "").replace(/\|$/, "").split("|").map((cell) => cell.trim());
 }
 
-// A table is a header row, a |---| separator row, then rows starting with "|"; everything else stays text.
 function withTables(text: string): ReactNode[] {
   const lines = text.split("\n");
   const out: ReactNode[] = [];
@@ -195,24 +309,24 @@ function withTables(text: string): ReactNode[] {
     if (buffer.length) out.push(<span key={out.length}>{inline(buffer.join("\n"))}</span>);
     buffer = [];
   };
-  for (let i = 0; i < lines.length; i++) {
-    if (lines[i].trim().startsWith("|") && i + 1 < lines.length && TABLE_SEPARATOR.test(lines[i + 1])) {
-      const header = cells(lines[i]);
+  for (let index = 0; index < lines.length; index++) {
+    if (lines[index].trim().startsWith("|") && index + 1 < lines.length && TABLE_SEPARATOR.test(lines[index + 1])) {
+      const header = cells(lines[index]);
       const rows: string[][] = [];
-      i += 2;
-      while (i < lines.length && lines[i].trim().startsWith("|")) rows.push(cells(lines[i++]));
-      i--;
+      index += 2;
+      while (index < lines.length && lines[index].trim().startsWith("|")) rows.push(cells(lines[index++]));
+      index--;
       flush();
       out.push(
         <div key={out.length} className="answer-table-wrap">
           <table className="answer-table">
-            <thead><tr>{header.map((h, j) => <th key={j}>{inline(h)}</th>)}</tr></thead>
-            <tbody>{rows.map((r, k) => <tr key={k}>{header.map((_, j) => <td key={j}>{inline(r[j] ?? "")}</td>)}</tr>)}</tbody>
+            <thead><tr>{header.map((heading, cellIndex) => <th key={cellIndex}>{inline(heading)}</th>)}</tr></thead>
+            <tbody>{rows.map((row, rowIndex) => <tr key={rowIndex}>{header.map((_, cellIndex) => <td key={cellIndex}>{inline(row[cellIndex] ?? "")}</td>)}</tr>)}</tbody>
           </table>
         </div>,
       );
     } else {
-      buffer.push(lines[i]);
+      buffer.push(lines[index]);
     }
   }
   flush();
@@ -220,9 +334,9 @@ function withTables(text: string): ReactNode[] {
 }
 
 function inline(text: string): ReactNode[] {
-  return text.split(/(\*\*[^*\n]+\*\*|`[^`\n]+`)/g).map((part, i) => {
-    if (part.startsWith("**") && part.endsWith("**") && part.length > 4) return <strong key={i}>{part.slice(2, -2)}</strong>;
-    if (part.startsWith("`") && part.endsWith("`") && part.length > 2) return <code key={i}>{part.slice(1, -1)}</code>;
+  return text.split(/(\*\*[^*\n]+\*\*|`[^`\n]+`)/g).map((part, index) => {
+    if (part.startsWith("**") && part.endsWith("**") && part.length > 4) return <strong key={index}>{part.slice(2, -2)}</strong>;
+    if (part.startsWith("`") && part.endsWith("`") && part.length > 2) return <code key={index}>{part.slice(1, -1)}</code>;
     return part;
   });
 }

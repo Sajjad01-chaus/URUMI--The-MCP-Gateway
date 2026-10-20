@@ -206,6 +206,30 @@ export interface ChatTurn {
   stopped_reason: StopReason;
 }
 
+export interface ChatConversation {
+  id: string;
+  title: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface PersistedChatMessage extends ChatMessage {
+  id: number;
+  tool_calls: ChatToolCall[];
+  stopped_reason: StopReason | null;
+  created_at: string;
+}
+
+export interface ChatConversationDetail extends ChatConversation {
+  messages: PersistedChatMessage[];
+}
+
+export type ChatStreamEvent =
+  | { event: "conversation"; data: { id: string; title: string; user_message_id: number } }
+  | { event: "tool"; data: ChatToolCall }
+  | { event: "delta"; data: { text: string } }
+  | { event: "done"; data: { message_id: number | null; stopped_reason: StopReason } };
+
 export class ApiError extends Error {
   constructor(
     public readonly status: number,
@@ -263,6 +287,52 @@ async function request<T>(method: string, path: string, body?: unknown, quiet401
   return data as T;
 }
 
+async function streamRequest(
+  path: string,
+  body: unknown,
+  onEvent: (event: ChatStreamEvent) => void,
+): Promise<void> {
+  let response: Response;
+  try {
+    response = await fetch(`/api${path}`, {
+      method: "POST",
+      credentials: "same-origin",
+      headers: {
+        Accept: "text/event-stream",
+        "Content-Type": "application/json",
+        "X-Requested-With": "dashboard",
+      },
+      body: JSON.stringify(body),
+    });
+  } catch {
+    throw new ApiError(0, "Cannot reach the gateway. Check your connection and try again.");
+  }
+  if (!response.ok) {
+    const data: unknown = await response.json().catch(() => null);
+    if (response.status === 401) onUnauthorized();
+    throw new ApiError(response.status, errorMessage(data, `${response.status} ${response.statusText}`));
+  }
+  if (!response.body) throw new ApiError(0, "The gateway returned an empty chat stream.");
+
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  while (true) {
+    const { value, done } = await reader.read();
+    buffer += decoder.decode(value, { stream: !done }).replace(/\r\n/g, "\n");
+    let boundary = buffer.indexOf("\n\n");
+    while (boundary >= 0) {
+      const block = buffer.slice(0, boundary);
+      buffer = buffer.slice(boundary + 2);
+      const event = block.split("\n").find((line) => line.startsWith("event: "))?.slice(7);
+      const raw = block.split("\n").filter((line) => line.startsWith("data: ")).map((line) => line.slice(6)).join("\n");
+      if (event && raw) onEvent({ event, data: JSON.parse(raw) } as ChatStreamEvent);
+      boundary = buffer.indexOf("\n\n");
+    }
+    if (done) break;
+  }
+}
+
 const q = (params: Record<string, string | number | undefined | null>) => {
   const search = new URLSearchParams();
   for (const [k, v] of Object.entries(params)) if (v !== undefined && v !== null && v !== "") search.set(k, String(v));
@@ -312,6 +382,14 @@ export const api = {
   revokeKey: (id: string) => request<void>("DELETE", `/keys/${id}`),
 
   chat: (messages: ChatMessage[]) => request<ChatTurn>("POST", "/chat", { messages }),
+  chatConversations: () => request<ChatConversation[]>("GET", "/chat/conversations"),
+  createChatConversation: () => request<ChatConversation>("POST", "/chat/conversations", { title: "New conversation" }),
+  chatConversation: (id: string) => request<ChatConversationDetail>("GET", `/chat/conversations/${id}`),
+  renameChatConversation: (id: string, title: string) =>
+    request<ChatConversation>("PATCH", `/chat/conversations/${id}`, { title }),
+  deleteChatConversation: (id: string) => request<void>("DELETE", `/chat/conversations/${id}`),
+  streamChatTurn: (id: string, message: string, onEvent: (event: ChatStreamEvent) => void) =>
+    streamRequest(`/chat/conversations/${id}/turns`, { message }, onEvent),
 
   audit: (filters: Record<string, string | number | undefined | null>) => request<AuditPage>("GET", `/audit${q(filters)}`),
   stats: (window: StatsWindow) => request<GatewayStats>("GET", `/stats${q({ window })}`),
