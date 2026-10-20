@@ -30,10 +30,6 @@ class BearerTokenMiddleware:
         await self.app(scope, receive, send)
 
 
-async def healthz(request: Request) -> JSONResponse:
-    return JSONResponse({"status": "ok"})
-
-
 def build_app(settings: Settings, woo: WooClient | None = None) -> ASGIApp:
     woo = woo or WooClient(
         base_url=settings.woo_base_url,
@@ -42,8 +38,11 @@ def build_app(settings: Settings, woo: WooClient | None = None) -> ASGIApp:
         consumer_secret=settings.woo_consumer_secret,
         timeout=settings.woo_timeout_seconds,
     )
-    server = create_server(woo, settings.woo_public_url)
-    server.custom_route("/healthz", methods=["GET"])(healthz)
+    server = create_server(woo, settings.woo_public_url, settings.app_version)
+
+    @server.custom_route("/healthz", methods=["GET"])
+    async def healthz(request: Request) -> JSONResponse:
+        return JSONResponse({"status": "ok", "version": settings.app_version})
     # Stateless + JSON: every request stands alone, so any replica can answer and restarts lose nothing.
     # Host allow-list (DNS-rebinding protection) accepts only the in-cluster service names we expect.
     mcp_app = server.streamable_http_app(

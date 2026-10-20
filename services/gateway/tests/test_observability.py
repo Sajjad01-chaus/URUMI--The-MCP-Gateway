@@ -12,12 +12,15 @@ async def test_gateway_metrics_and_admin_stats(gw):
         await client.call_tool("woo__create_product", {"name": "blocked"})
 
     async with httpx2.AsyncClient(base_url=gw.url) as http:
+        assert (await http.get("/healthz")).json()["version"] == "dev"
         metrics = await http.get("/metrics")
         assert metrics.status_code == 200
         assert 'urumi_tool_calls_total{outcome="success",server="woo",source="mcp",tool="list_orders"} 1.0' in metrics.text
         assert 'urumi_upstream_up{server="woo"} 1.0' in metrics.text
 
     async with httpx2.AsyncClient(base_url=gw.url, headers={"Authorization": f"Bearer {gw.admin_key}"}) as admin:
+        servers = (await admin.get("/api/servers")).json()
+        assert {row["slug"]: row["version"] for row in servers} == {"notes": "test-notes", "woo": "test-woo"}
         stats = (await admin.get("/api/stats", params={"window": "15m"})).json()
         assert (stats["window"], stats["total_calls"], stats["total_errors"]) == ("15m", 2, 1)
         woo = next(server for server in stats["servers"] if server["slug"] == "woo")

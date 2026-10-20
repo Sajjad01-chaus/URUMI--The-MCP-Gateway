@@ -72,7 +72,9 @@ class HealthMonitor:
             with anyio.fail_after(self.timeout):
                 async with self.connector(target_for(state, self.registry.box)) as client:
                     tools = await list_all_tools(client)
-            state.tools, state.status, state.last_error, state.consecutive_failures = tools, "connected", None, 0
+                    version = client.server_info.version if client.server_info else ""
+            state.tools, state.version = tools, version
+            state.status, state.last_error, state.consecutive_failures = "connected", None, 0
             result = "ok"
         except Exception as exc:
             state.consecutive_failures += 1

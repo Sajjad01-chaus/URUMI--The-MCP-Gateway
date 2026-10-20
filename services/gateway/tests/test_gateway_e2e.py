@@ -23,7 +23,7 @@ WRITE = types.ToolAnnotations(read_only_hint=False)
 
 
 def make_woo() -> MCPServer:
-    server = MCPServer("woo")
+    server = MCPServer("woo", version="test-woo")
 
     @server.tool(annotations=READ)
     def list_orders() -> list[int]:
@@ -44,7 +44,7 @@ def make_woo() -> MCPServer:
 
 
 def make_notes() -> MCPServer:
-    server = MCPServer("notes")
+    server = MCPServer("notes", version="test-notes")
 
     @server.tool(annotations=READ)
     def search(q: str) -> str:
@@ -162,6 +162,7 @@ async def test_same_tool_name_routes_to_the_right_server(gw):
     assert woo.structured_content == {"result": "woo:mug"}
     assert notes.structured_content == {"result": "notes:mug"}
     assert woo.meta["io.modelcontextprotocol/serverInfo"]["name"] == "urumi-mcp-gateway"
+    assert woo.meta["io.modelcontextprotocol/serverInfo"]["version"] == "dev"
 
 
 async def test_member_cannot_call_hidden_write_tool_directly(gw):

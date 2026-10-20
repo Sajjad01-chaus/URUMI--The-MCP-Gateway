@@ -26,7 +26,7 @@ OrderStatus = Literal["pending", "processing", "on-hold", "completed", "cancelle
 READ_ONLY = ToolAnnotations(readOnlyHint=True, openWorldHint=False)
 
 
-def create_server(woo: WooClient, public_url: str = "") -> MCPServer:
+def create_server(woo: WooClient, public_url: str = "", version: str = "dev") -> MCPServer:
     """Build the MCP server; every tool talks to the store only through `woo`.
 
     `public_url` replaces the scheme+host WordPress puts in links: woo-mcp calls WordPress with
@@ -34,6 +34,7 @@ def create_server(woo: WooClient, public_url: str = "") -> MCPServer:
     """
     mcp = MCPServer(
         name="woo-mcp",
+        version=version,
         instructions="Tools for one WooCommerce store: products and orders. Dates use the store's timezone.",
     )
     cache: dict[str, Any] = {}

@@ -48,6 +48,8 @@ spec:
             - until python -c "import socket; socket.create_connection(('postgres', 5432), 2)" 2>/dev/null; do echo waiting for postgres; sleep 2; done; alembic upgrade head
           workingDir: /app
           env:
+            - name: APP_VERSION
+              value: {{ regexFind "[^:@]+$" .Values.gateway.image | quote }}
             - name: POSTGRES_PASSWORD
               valueFrom:
                 secretKeyRef: { name: postgres-auth, key: password }
@@ -63,6 +65,8 @@ spec:
           image: {{ .Values.gateway.image }}
           imagePullPolicy: {{ .Values.gateway.imagePullPolicy }}
           env:
+            - name: APP_VERSION
+              value: {{ regexFind "[^:@]+$" .Values.gateway.image | quote }}
             - name: POSTGRES_PASSWORD
               valueFrom:
                 secretKeyRef: { name: postgres-auth, key: password }

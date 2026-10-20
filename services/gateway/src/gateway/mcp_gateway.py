@@ -45,7 +45,7 @@ def result_size(result: types.CallToolResult) -> int:
 
 def build_mcp_server(
     catalog: Catalog, hub: SessionHub, auditor: Auditor, box: CredentialBox, connector: Connector,
-    metrics: GatewayMetrics, max_result_bytes: int,
+    metrics: GatewayMetrics, max_result_bytes: int, app_version: str,
 ) -> GatewayServer:
     def track(ctx: Any) -> None:
         request = ctx.request
@@ -116,6 +116,7 @@ def build_mcp_server(
 
     return GatewayServer(
         "urumi-mcp-gateway",
+        version=app_version,
         instructions="Team MCP gateway. Tool names are '<server>__<tool>'; the prefix says which system a tool acts on.",
         on_list_tools=list_tools,
         on_call_tool=call_tool,

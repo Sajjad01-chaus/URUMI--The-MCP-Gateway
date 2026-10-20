@@ -29,6 +29,7 @@ class Settings(BaseSettings):
 
     database_url: str
     credential_encryption_key: str
+    app_version: str = "dev"
     session_secret: str = DEV_SESSION_SECRET
     chat_token_secret: str = DEV_CHAT_SECRET
     bootstrap_admin_email: str = ""

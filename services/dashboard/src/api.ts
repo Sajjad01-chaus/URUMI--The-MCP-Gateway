@@ -32,6 +32,7 @@ export interface Server {
   timeout_seconds: number;
   is_managed: boolean;
   managed_kind: "store" | "hosted_mcp" | null;
+  version: string;
   last_error: string | null;
   last_checked_at: string | null;
   tools: ServerTool[];
@@ -273,7 +274,7 @@ export const api = {
   me: () => request<User>("GET", "/auth/me", undefined, true),
   login: (email: string, password: string) => request<User>("POST", "/auth/login", { email, password }, true),
   logout: () => request<void>("POST", "/auth/logout"),
-  meta: () => request<{ mcp_url: string }>("GET", "/meta"),
+  meta: () => request<{ mcp_url: string; gateway_version: string }>("GET", "/meta"),
 
   servers: () => request<Server[]>("GET", "/servers"),
   createServer: (data: ServerInput) => request<Server>("POST", "/servers", data),

@@ -21,6 +21,7 @@ READ_ONLY = ToolAnnotations(readOnlyHint=True)
 
 class Settings(BaseSettings):
     mcp_auth_token: str
+    app_version: str = "dev"
     notes_db_path: str = "/data/notes.db"
     allowed_hosts: str = "localhost:*,127.0.0.1:*"
     port: int = 8000
@@ -64,8 +65,8 @@ async def fault_delay() -> None:
         await asyncio.sleep(delay_ms / 1000)
 
 
-def create_server(store: NoteStore) -> MCPServer:
-    mcp = MCPServer(name="notes-mcp", instructions="Team notes: create, list, read and search short notes.")
+def create_server(store: NoteStore, version: str = "dev") -> MCPServer:
+    mcp = MCPServer(name="notes-mcp", version=version, instructions="Team notes: create, list, read and search short notes.")
 
     @mcp.tool()
     async def create_note(title: Annotated[str, Field(min_length=1, max_length=200)], body: Annotated[str, Field(max_length=5000)]) -> Note:
@@ -115,11 +116,11 @@ class BearerTokenMiddleware:
 
 
 def build_app(settings: Settings) -> ASGIApp:
-    server = create_server(NoteStore(settings.notes_db_path))
+    server = create_server(NoteStore(settings.notes_db_path), settings.app_version)
 
     @server.custom_route("/healthz", methods=["GET"])
     async def healthz(request: Request) -> JSONResponse:
-        return JSONResponse({"status": "ok"})
+        return JSONResponse({"status": "ok", "version": settings.app_version})
 
     app = server.streamable_http_app(
         stateless_http=True,

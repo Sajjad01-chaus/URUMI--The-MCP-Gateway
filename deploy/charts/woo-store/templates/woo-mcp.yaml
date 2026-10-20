@@ -42,6 +42,8 @@ spec:
           image: {{ .Values.wooMcp.image }}
           imagePullPolicy: {{ .Values.wooMcp.imagePullPolicy }}
           env:
+            - name: APP_VERSION
+              value: {{ regexFind "[^:@]+$" .Values.wooMcp.image | quote }}
             - name: WOO_BASE_URL
               value: http://wordpress
             - name: WOO_STORE_HOST

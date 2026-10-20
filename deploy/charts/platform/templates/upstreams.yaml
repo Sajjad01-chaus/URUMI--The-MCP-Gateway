@@ -39,6 +39,8 @@ spec:
           image: {{ $u.values.image }}
           imagePullPolicy: {{ $u.values.imagePullPolicy }}
           env:
+            - name: APP_VERSION
+              value: {{ regexFind "[^:@]+$" $u.values.image | quote }}
             - name: {{ $u.envName }}
               valueFrom:
                 secretKeyRef: { name: {{ $u.secret }}, key: {{ $u.secretKey }} }

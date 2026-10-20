@@ -79,7 +79,9 @@ def create_app(
     )
 
     auditor = Auditor(db)
-    mcp_server = build_mcp_server(catalog, hub, auditor, box, connector, metrics, settings.max_result_bytes)
+    mcp_server = build_mcp_server(
+        catalog, hub, auditor, box, connector, metrics, settings.max_result_bytes, settings.app_version
+    )
     mcp_app = mcp_server.streamable_http_app(
         transport_security=TransportSecuritySettings(
             enable_dns_rebinding_protection=True,

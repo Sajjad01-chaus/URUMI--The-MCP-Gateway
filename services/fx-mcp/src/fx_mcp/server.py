@@ -29,6 +29,7 @@ Currency = Annotated[str, Field(min_length=3, max_length=3, description="ISO 421
 
 class Settings(BaseSettings):
     fx_api_key: str
+    app_version: str = "dev"
     allowed_hosts: str = "localhost:*,127.0.0.1:*"
     port: int = 8000
 
@@ -55,8 +56,8 @@ def rate(from_code: str, to_code: str) -> Decimal:
         raise ToolError(f"unsupported currency {exc.args[0]}; supported: {', '.join(USD_RATES)}") from exc
 
 
-def create_server() -> MCPServer:
-    mcp = MCPServer(name="fx-mcp", instructions="Currency conversion with a fixed demo rate table.")
+def create_server(version: str = "dev") -> MCPServer:
+    mcp = MCPServer(name="fx-mcp", version=version, instructions="Currency conversion with a fixed demo rate table.")
 
     @mcp.tool(annotations=READ_ONLY)
     def convert_currency(amount: Annotated[Decimal, Field(ge=0)], from_currency: Currency, to_currency: Currency) -> Conversion:
@@ -101,11 +102,11 @@ class ApiKeyMiddleware:
 
 
 def build_app(settings: Settings) -> ASGIApp:
-    server = create_server()
+    server = create_server(settings.app_version)
 
     @server.custom_route("/healthz", methods=["GET"])
     async def healthz(request: Request) -> JSONResponse:
-        return JSONResponse({"status": "ok"})
+        return JSONResponse({"status": "ok", "version": settings.app_version})
 
     app = server.streamable_http_app(
         stateless_http=True,

@@ -266,4 +266,7 @@ async def test_tools_api_matches_mcp_tools_list_per_role_and_meta_gives_mcp_url(
             rest = (await http.get("/api/tools")).json()
             assert {t["exposed_name"] for t in rest} == await names(client)
             assert all(t["server_slug"] and "properties" in t["input_schema"] for t in rest)
-            assert (await http.get("/api/meta")).json() == {"mcp_url": "http://mcp.127-0-0-1.nip.io/mcp"}
+            assert (await http.get("/api/meta")).json() == {
+                "mcp_url": "http://mcp.127-0-0-1.nip.io/mcp",
+                "gateway_version": "dev",
+            }

@@ -92,7 +92,7 @@ export default function ServersPage() {
                       {s.managed_kind === "store" && <span className="badge badge-blue">managed store</span>}
                       {s.managed_kind === "hosted_mcp" && <span className="badge badge-violet">hosted image</span>}
                     </div>
-                    <div className="cell-sub">{s.url}</div>
+                    <div className="cell-sub">{s.url}{s.version && <> · version {s.version}</>}</div>
                   </td>
                   <td>
                     <StatusBadge status={s.status} />
@@ -183,6 +183,7 @@ function ServerDrawer({ server, onClose }: { server: Server; onClose: () => void
         <dl className="key-value">
           <dt>Slug</dt><dd className="mono">{server.slug}</dd>
           <dt>Status</dt><dd><StatusBadge status={server.status} /></dd>
+          <dt>Version</dt><dd className="mono">{server.version || "not reported"}</dd>
           {server.last_error && <><dt>Last error</dt><dd>{server.last_error}</dd></>}
           <dt>URL</dt><dd className="mono">{server.url}</dd>
           <dt>Auth</dt>

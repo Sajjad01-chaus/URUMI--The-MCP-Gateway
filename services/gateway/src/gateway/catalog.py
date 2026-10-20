@@ -37,6 +37,7 @@ class UpstreamState:
     timeout_seconds: int
     is_managed: bool = False
     managed_kind: str | None = None
+    version: str = ""
     status: str = "unknown"
     status_since: datetime | None = None
     last_error: str | None = None
@@ -78,6 +79,7 @@ class Catalog:
         previous = self.servers.get(state.slug)
         if previous is not None:
             state.status, state.tools = previous.status, previous.tools
+            state.version = previous.version
             state.status_since = previous.status_since
             state.last_error, state.last_checked_at = previous.last_error, previous.last_checked_at
             state.consecutive_failures, state.semaphore = previous.consecutive_failures, previous.semaphore

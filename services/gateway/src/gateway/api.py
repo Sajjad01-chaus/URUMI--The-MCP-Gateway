@@ -44,6 +44,7 @@ class ServerOut(BaseModel):
     timeout_seconds: int
     is_managed: bool
     managed_kind: str | None
+    version: str
     last_error: str | None
     last_checked_at: datetime | None
     tools: list[ToolOut]
@@ -55,6 +56,7 @@ def server_out(svc, state: UpstreamState) -> ServerOut:
         status=state.display_status, auth_type=state.auth_type, auth_header_name=state.auth_header_name,
         has_credential=state.credential_encrypted is not None, timeout_seconds=state.timeout_seconds,
         is_managed=state.is_managed, managed_kind=state.managed_kind,
+        version=state.version,
         last_error=state.last_error, last_checked_at=state.last_checked_at,
         tools=[
             ToolOut(
@@ -75,8 +77,8 @@ def find(svc, server_id: uuid.UUID) -> UpstreamState:
 
 
 @router.get("/healthz")
-async def healthz():
-    return {"status": "ok"}
+async def healthz(request: Request):
+    return {"status": "ok", "version": services(request).settings.app_version}
 
 
 @router.get("/readyz")
@@ -168,6 +170,7 @@ class CatalogToolOut(BaseModel):
 
 class MetaOut(BaseModel):
     mcp_url: str
+    gateway_version: str
 
 
 @router.get("/api/tools", response_model=list[CatalogToolOut])
@@ -189,7 +192,8 @@ async def list_tools(request: Request, principal: Principal = Depends(current_pr
 
 @router.get("/api/meta", response_model=MetaOut)
 async def meta(request: Request, _: Principal = Depends(current_principal)):
-    return MetaOut(mcp_url=services(request).settings.public_mcp_url)
+    settings = services(request).settings
+    return MetaOut(mcp_url=settings.public_mcp_url, gateway_version=settings.app_version)
 
 
 class PermissionOut(BaseModel):

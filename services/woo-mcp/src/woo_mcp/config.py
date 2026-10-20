@@ -11,6 +11,7 @@ class Settings(BaseSettings):
     woo_consumer_secret: str
     woo_timeout_seconds: float = 15.0
     mcp_auth_token: str
+    app_version: str = "dev"
     allowed_hosts: str = "localhost:*,127.0.0.1:*"
     port: int = 8000
 

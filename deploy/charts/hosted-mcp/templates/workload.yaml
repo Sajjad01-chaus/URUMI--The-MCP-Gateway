@@ -41,6 +41,8 @@ spec:
           ports:
             - { name: mcp, containerPort: {{ .Values.mcp.port }}, protocol: TCP }
           env:
+            - name: APP_VERSION
+              value: {{ .Values.image.tag | quote }}
             {{- range $name, $value := .Values.mcp.env }}
             - name: {{ $name }}
               value: {{ $value | quote }}

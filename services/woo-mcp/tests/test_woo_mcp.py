@@ -122,15 +122,17 @@ async def test_update_order_status_reports_previous_and_adds_note(woo, fake):
 
 
 def test_http_app_requires_token_except_healthz(woo):
-    settings = Settings(woo_store_host="store.test", woo_consumer_key="ck", woo_consumer_secret="cs", mcp_auth_token="secret-token", allowed_hosts="testserver")
+    settings = Settings(woo_store_host="store.test", woo_consumer_key="ck", woo_consumer_secret="cs", mcp_auth_token="secret-token", allowed_hosts="testserver", app_version="test-v1")
     body = {"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {"protocolVersion": "2025-11-25", "capabilities": {}, "clientInfo": {"name": "t", "version": "0"}}}
     headers = {"Accept": "application/json, text/event-stream"}
     with TestClient(build_app(settings, woo)) as http:
-        assert http.get("/healthz").status_code == 200
+        assert http.get("/healthz").json() == {"status": "ok", "version": "test-v1"}
         assert http.post("/mcp", json=body, headers=headers).status_code == 401
         assert http.post("/mcp", json=body, headers={**headers, "Authorization": "Bearer wrong"}).status_code == 401
         ok = http.post("/mcp", json=body, headers={**headers, "Authorization": "Bearer secret-token"})
-        assert ok.status_code == 200 and ok.json()["result"]["serverInfo"]["name"] == "woo-mcp"
+        assert ok.status_code == 200 and ok.json()["result"]["serverInfo"] == {
+            "name": "woo-mcp", "version": "test-v1"
+        }
         bad_host = http.post("/mcp", json=body, headers={**headers, "Authorization": "Bearer secret-token", "Host": "evil.example"})
         assert bad_host.status_code in (400, 421)
 

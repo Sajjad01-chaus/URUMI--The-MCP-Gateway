@@ -1,5 +1,6 @@
 import { NavLink, Navigate, Outlet, Route, Routes } from "react-router-dom";
 
+import { api } from "./api";
 import { RequireAuth, useAuth, useCurrentUser } from "./auth";
 import AcceptInvitePage from "./pages/AcceptInvite";
 import AuditPage from "./pages/Audit";
@@ -13,11 +14,12 @@ import ServersPage from "./pages/Servers";
 import StatsPage from "./pages/Stats";
 import StoresPage from "./pages/Stores";
 import ToolsPage from "./pages/Tools";
-import { RoleBadge } from "./ui";
+import { RoleBadge, useLoad } from "./ui";
 
 function Layout() {
   const user = useCurrentUser();
   const { logout } = useAuth();
+  const meta = useLoad(api.meta);
   const isAdmin = user.role === "admin";
   const link = ({ isActive }: { isActive: boolean }) => `nav-link${isActive ? " active" : ""}`;
   return (
@@ -45,6 +47,7 @@ function Layout() {
             <div className="cell-sub">{user.name && <>{user.email} · </>}<RoleBadge role={user.role} /></div>
           </div>
           <button className="button button-small" onClick={() => void logout()}>Sign out</button>
+          <div className="cell-sub">gateway {meta.data?.gateway_version ?? "…"}</div>
         </div>
       </nav>
       <main className="main">
