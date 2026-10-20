@@ -130,6 +130,10 @@ input, select, textarea {
   border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px; width: 100%;
 }
 input:focus, select:focus, textarea:focus, .button:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.checkbox-row { display: flex; gap: 10px; align-items: flex-start; margin-top: 14px; color: var(--muted); }
+.checkbox-row input { width: auto; margin-top: 3px; }
+.card-header { padding: 18px 20px 0; }
+.card-header h2 { margin: 0; font-size: 16px; }
 .field-row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
 .inline-form { display: flex; gap: 8px; align-items: flex-end; flex-wrap: wrap; }
 .inline-form .field { margin-bottom: 0; }

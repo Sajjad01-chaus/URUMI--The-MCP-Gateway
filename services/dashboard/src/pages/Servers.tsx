@@ -1,10 +1,11 @@
 import { useState, type FormEvent } from "react";
 
-import { api, type Server, type ServerInput } from "../api";
+import { api, type HostedServer, type Server, type ServerInput } from "../api";
 import { useCurrentUser } from "../auth";
 import {
   ConfirmDialog, Empty, ErrorBanner, Modal, PageHeader, RoleBadge, StatusBadge, timeAgo, useAction, useEscape, useLoad,
 } from "../ui";
+import { HostedDeployDialog } from "./HostedDeploy";
 
 const SLUG_RE = /^[a-z0-9]+(-[a-z0-9]+)*$/;
 
@@ -13,9 +14,12 @@ export default function ServersPage() {
   const isAdmin = user.role === "admin";
   // Polls so health changes (a killed or recovered upstream) show up without a manual refresh.
   const servers = useLoad(api.servers, 10_000);
+  const hosted = useLoad(() => (isAdmin ? api.hostedServers() : Promise.resolve([])), 3_000);
   const [selected, setSelected] = useState<Server | null>(null);
   const [editing, setEditing] = useState<Server | "new" | null>(null);
   const [deleting, setDeleting] = useState<Server | null>(null);
+  const [deploying, setDeploying] = useState(false);
+  const [deletingHosted, setDeletingHosted] = useState<HostedServer | null>(null);
   const action = useAction();
 
   const replace = (updated: Server) =>
@@ -31,9 +35,41 @@ export default function ServersPage() {
       <PageHeader
         title="Servers"
         subtitle="Upstream MCP servers behind the gateway. Their tools are exposed as <slug>__<tool>."
-        actions={isAdmin && <button className="button button-primary" onClick={() => setEditing("new")}>Add server</button>}
+        actions={isAdmin && (
+          <>
+            <button className="button" onClick={() => setEditing("new")}>Connect URL</button>
+            <button className="button button-primary" onClick={() => setDeploying(true)}>Deploy from image</button>
+          </>
+        )}
       />
-      <ErrorBanner message={servers.error ?? action.error} />
+      <ErrorBanner message={servers.error ?? hosted.error ?? action.error} />
+      {isAdmin && (
+        <div className="card">
+          <div className="card-header"><h2>Hosted deployments</h2></div>
+          <div className="table-wrap">
+            <table>
+              <thead><tr><th>Name</th><th>Image</th><th>Status</th><th /></tr></thead>
+              <tbody>
+                {hosted.data?.map((item) => (
+                  <tr key={item.id}>
+                    <td><div className="cell-main">{item.name} <span className="chip">{item.slug}</span></div><div className="cell-sub">{item.reason}</div></td>
+                    <td className="mono">{item.image}</td>
+                    <td><StatusBadge status={item.status} /></td>
+                    <td>
+                      <div className="row-actions">
+                        {item.status === "failed" && <button className="button button-small" disabled={action.busy} onClick={() => void action.run(async () => { await api.retryHostedServer(item.id); await hosted.reload(); })}>Retry</button>}
+                        {item.status !== "deleting" && <button className="button button-small button-danger" onClick={() => setDeletingHosted(item)}>Remove</button>}
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            {hosted.data?.length === 0 && <Empty>No hosted MCP deployments.</Empty>}
+            {!hosted.data && !hosted.error && <Empty>Loading…</Empty>}
+          </div>
+        </div>
+      )}
       <div className="card">
         <div className="table-wrap">
           <table>
@@ -53,7 +89,8 @@ export default function ServersPage() {
                   <td>
                     <div className="cell-main">
                       {s.name} <span className="chip">{s.slug}</span>{" "}
-                      {s.is_managed && <span className="badge badge-blue">managed</span>}
+                      {s.managed_kind === "store" && <span className="badge badge-blue">managed store</span>}
+                      {s.managed_kind === "hosted_mcp" && <span className="badge badge-violet">hosted image</span>}
                     </div>
                     <div className="cell-sub">{s.url}</div>
                   </td>
@@ -115,6 +152,20 @@ export default function ServersPage() {
           }}
         />
       )}
+      {deploying && <HostedDeployDialog onClose={() => setDeploying(false)} onCreated={hosted.reload} />}
+      {deletingHosted && (
+        <ConfirmDialog
+          title={`Remove ${deletingHosted.name}?`}
+          message={<>Its tools disappear immediately; then its isolated namespace and Secret are deleted.</>}
+          confirmLabel="Remove hosted server"
+          danger
+          onClose={() => setDeletingHosted(null)}
+          onConfirm={async () => {
+            await api.deleteHostedServer(deletingHosted.id);
+            await hosted.reload();
+          }}
+        />
+      )}
     </>
   );
 }
@@ -140,7 +191,7 @@ function ServerDrawer({ server, onClose }: { server: Server; onClose: () => void
             {server.has_credential && <span className="muted"> · •••• set</span>}
           </dd>
           <dt>Call timeout</dt><dd>{server.timeout_seconds}s</dd>
-          <dt>Managed</dt><dd>{server.is_managed ? "Created automatically from Stores" : "Manual"}</dd>
+          <dt>Managed</dt><dd>{server.managed_kind === "store" ? "Created automatically from Stores" : server.managed_kind === "hosted_mcp" ? "Deployed from a container image" : "Manual"}</dd>
         </dl>
         <h3 style={{ marginTop: 22 }}>Tools ({server.tools.length})</h3>
         {server.tools.length === 0 && <p className="muted">No tools known yet (the server has never answered).</p>}

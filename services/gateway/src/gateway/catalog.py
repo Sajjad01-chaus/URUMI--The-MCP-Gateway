@@ -36,6 +36,7 @@ class UpstreamState:
     credential_encrypted: bytes | None
     timeout_seconds: int
     is_managed: bool = False
+    managed_kind: str | None = None
     status: str = "unknown"
     last_error: str | None = None
     last_checked_at: datetime | None = None

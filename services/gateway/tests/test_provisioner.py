@@ -105,7 +105,8 @@ class FakeRunner:
         if args[1] == "status":
             raise HelmError("release: not found")
         if args[1] == "upgrade":
-            self.values_path = Path(args[args.index("-f", args.index("-f") + 1) + 1])
+            values_index = max(index for index, value in enumerate(args) if value == "-f")
+            self.values_path = Path(args[values_index + 1])
             self.values = json.loads(self.values_path.read_text(encoding="utf-8"))
         return CommandResult("", "")
 
@@ -114,12 +115,19 @@ class FakeKubernetes:
     def __init__(self):
         self.ensured: tuple[str, str] | None = None
         self.verified: str | None = None
+        self.hosted_verified: str | None = None
 
     async def ensure_tenant_namespace(self, namespace: str, slug: str) -> None:
         self.ensured = (namespace, slug)
 
     async def verify_store(self, namespace: str) -> None:
         self.verified = namespace
+
+    async def verify_hosted(self, namespace: str) -> None:
+        self.hosted_verified = namespace
+
+    async def wait_hosted_ready(self, namespace: str, timeout_seconds: int) -> None:
+        await self.verify_hosted(namespace)
 
 
 async def test_helm_values_use_a_mode_600_temporary_file_and_mask_secrets(tmp_path):
@@ -143,6 +151,39 @@ async def test_helm_values_use_a_mode_600_temporary_file_and_mask_secrets(tmp_pa
     assert runner.values_path and not runner.values_path.exists()
     assert "TOP-SECRET" not in " ".join(part for call in runner.calls for part in call)
     assert mask("failed TOP-SECRET TOKEN", list(store_secrets.values())) == "failed [REDACTED] [REDACTED]"
+
+
+async def test_hosted_helm_values_are_hardened_inputs_and_secrets_are_temporary(tmp_path):
+    key = Fernet.generate_key().decode()
+    settings = Settings(
+        database_url="sqlite+aiosqlite://",
+        credential_encryption_key=key,
+        provisioner_temp_dir=str(tmp_path),
+        provisioner_chart_root="/charts",
+    )
+    runner = FakeRunner()
+    kube = FakeKubernetes()
+    helm = HelmClient(settings, runner=runner)
+    row = release(uuid.uuid4(), "clock")
+    row.kind = "hosted_mcp"
+    row.namespace = "mcp-clock"
+    row.release = "mcp-clock"
+    row.spec = {
+        "image": "urumi/fx-mcp:dev",
+        "port": 8000,
+        "path": "/mcp",
+        "env": {"LOG_LEVEL": "info"},
+        "size": "medium",
+        "internet_egress": False,
+    }
+    await helm.install_hosted(row, {"MCP_TOKEN": "TOP-SECRET"}, kube, timeout_seconds=120)
+
+    assert kube.ensured == ("mcp-clock", "clock") and kube.hosted_verified == "mcp-clock"
+    assert runner.values["image"] == {"repository": "urumi/fx-mcp", "tag": "dev"}
+    assert runner.values["mcp"]["secretEnv"] == {"MCP_TOKEN": "TOP-SECRET"}
+    assert runner.values["resources"]["limits"]["memory"] == "512Mi"
+    assert runner.values_path and not runner.values_path.exists()
+    assert "TOP-SECRET" not in " ".join(part for call in runner.calls for part in call)
 
 
 async def test_deleted_slug_can_be_reused(tmp_path):

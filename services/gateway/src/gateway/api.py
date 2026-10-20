@@ -39,6 +39,7 @@ class ServerOut(BaseModel):
     has_credential: bool
     timeout_seconds: int
     is_managed: bool
+    managed_kind: str | None
     last_error: str | None
     last_checked_at: datetime | None
     tools: list[ToolOut]
@@ -49,7 +50,7 @@ def server_out(svc, state: UpstreamState) -> ServerOut:
         id=state.id, slug=state.slug, name=state.name, url=state.url, enabled=state.enabled,
         status=state.display_status, auth_type=state.auth_type, auth_header_name=state.auth_header_name,
         has_credential=state.credential_encrypted is not None, timeout_seconds=state.timeout_seconds,
-        is_managed=state.is_managed,
+        is_managed=state.is_managed, managed_kind=state.managed_kind,
         last_error=state.last_error, last_checked_at=state.last_checked_at,
         tools=[
             ToolOut(

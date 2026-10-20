@@ -17,13 +17,14 @@ from .chat import router as chat_router
 from .config import Settings, get_settings
 from .db import Database
 from .health import HealthMonitor
+from .hosted import router as hosted_router
 from .hub import SessionHub
 from .managed import router as managed_router
 from .mcp_gateway import build_mcp_server
 from .registry import Registry
+from .release_sync import ManagedReleaseSync
 from .security import CredentialBox
 from .sessions import LoginThrottle
-from .store_sync import StoreSync
 from .team import router as team_router
 from .upstream import Connector, http_connector
 
@@ -40,7 +41,7 @@ class Services:
     hub: SessionHub
     registry: Registry
     monitor: HealthMonitor
-    store_sync: StoreSync
+    release_sync: ManagedReleaseSync
     resolve_api_key: Resolver
     throttle: LoginThrottle
     chat: ChatAgent
@@ -63,14 +64,14 @@ def create_app(
         catalog, registry, connector, hub,
         settings.health_interval_seconds, settings.health_timeout_seconds, settings.unreachable_after_failures,
     )
-    store_sync = StoreSync(db, box, catalog, registry, monitor, settings.provisioner_poll_seconds)
+    release_sync = ManagedReleaseSync(db, box, catalog, registry, monitor, settings.provisioner_poll_seconds)
     resolve_api_key = api_key_resolver(db)
     owned_llm = None if llm else OpenAICompatibleLLM(
         settings.llm_base_url, settings.llm_api_key, settings.llm_model, settings.llm_timeout_seconds
     )
     chat_agent = ChatAgent(settings, llm or owned_llm)
     svc = Services(
-        settings, db, box, catalog, hub, registry, monitor, store_sync,
+        settings, db, box, catalog, hub, registry, monitor, release_sync,
         resolve_api_key, LoginThrottle(), chat_agent,
     )
 
@@ -91,7 +92,7 @@ def create_app(
         await registry.load()
         async with mcp_server.session_manager.run():
             tasks = (
-                [asyncio.create_task(monitor.run()), asyncio.create_task(store_sync.run())]
+                [asyncio.create_task(monitor.run()), asyncio.create_task(release_sync.run())]
                 if run_monitor else []
             )
             try:
@@ -111,5 +112,6 @@ def create_app(
     app.include_router(team_router)
     app.include_router(chat_router)
     app.include_router(managed_router)
+    app.include_router(hosted_router)
     app.mount("/", McpAuthMiddleware(mcp_app, [resolve_api_key, chat_token_resolver(db, settings.chat_token_secret)], hub, rejected_call_auditor(db, auditor)))
     return app

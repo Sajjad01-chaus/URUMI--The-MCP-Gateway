@@ -87,7 +87,7 @@ class ReleaseRepository:
             )
             await session.commit()
 
-    async def ready(self, release_id: uuid.UUID) -> None:
+    async def ready(self, release_id: uuid.UUID, kind: str) -> None:
         now = utcnow()
         async with self.db.session() as session:
             await session.execute(
@@ -95,7 +95,7 @@ class ReleaseRepository:
                 .where(ManagedRelease.id == release_id, ManagedRelease.lease_owner == self.worker_id)
                 .values(
                     status="ready",
-                    status_reason="store resources are ready",
+                    status_reason=("store resources are ready" if kind == "store" else "hosted MCP resources are ready"),
                     ready_at=now,
                     lease_owner=None,
                     lease_until=None,

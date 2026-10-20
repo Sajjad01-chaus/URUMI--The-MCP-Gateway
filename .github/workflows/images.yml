@@ -8,6 +8,7 @@ on:
     paths:
       - "services/**"
       - "deploy/charts/woo-store/**"
+      - "deploy/charts/hosted-mcp/**"
       - ".dockerignore"
       - ".github/workflows/images.yml"
   workflow_dispatch:

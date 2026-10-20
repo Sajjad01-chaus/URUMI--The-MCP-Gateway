@@ -117,7 +117,7 @@ async def test_ready_store_is_registered_recovered_and_removed_through_store_api
             ))
             await session.commit()
 
-        await gw.svc.store_sync.reconcile()
+        await gw.svc.release_sync.reconcile()
         state = gw.svc.catalog.servers["london"]
         assert state.is_managed and state.status == "connected"
         assert {tool.name for tool in state.tools} == {"list_orders", "create_product", "search"}
@@ -135,7 +135,7 @@ async def test_ready_store_is_registered_recovered_and_removed_through_store_api
         assert (await http.delete(f"/api/servers/{managed['id']}")).status_code == 409
 
         gw.svc.catalog.remove("london")
-        await gw.svc.store_sync.reconcile()
+        await gw.svc.release_sync.reconcile()
         assert gw.svc.catalog.servers["london"].is_managed
 
         deleted = await http.delete(f"/api/stores/{release_id}")

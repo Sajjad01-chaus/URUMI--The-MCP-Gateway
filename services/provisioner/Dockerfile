@@ -25,6 +25,7 @@ COPY --from=build /app/.venv /app/.venv
 COPY services/gateway/alembic.ini ./
 COPY services/gateway/migrations ./migrations
 COPY deploy/charts/woo-store /charts/woo-store
+COPY deploy/charts/hosted-mcp /charts/hosted-mcp
 ENV PATH="/app/.venv/bin:$PATH" PYTHONUNBUFFERED=1
 USER 10001
 CMD ["python", "-m", "gateway.provisioner"]

@@ -117,6 +117,8 @@ spec:
               value: {{ $seeds | toJson | quote }}
             - name: ALLOWED_INTERNAL_HOSTS
               value: {{ .Values.gateway.allowedInternalHosts | quote }}
+            - name: HOSTED_MCP_ALLOWED_REGISTRIES
+              value: {{ join "," .Values.hostedMcp.allowedRegistries | quote }}
             - name: ALLOWED_MCP_HOSTS
               value: "{{ $mcpHost }},{{ $mcpHost }}:*,{{ $appHost }},{{ $appHost }}:*,localhost:*,127.0.0.1:*"
             - name: HEALTH_INTERVAL_SECONDS

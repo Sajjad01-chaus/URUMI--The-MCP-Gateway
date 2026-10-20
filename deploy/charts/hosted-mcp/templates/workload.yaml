@@ -1,0 +1,80 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: mcp
+  labels: {{- include "hosted.labels" . | nindent 4 }}
+automountServiceAccountToken: false
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: mcp-env
+  labels: {{- include "hosted.labels" . | nindent 4 }}
+type: Opaque
+stringData:
+  {{- range $name, $value := .Values.mcp.secretEnv }}
+  {{ $name }}: {{ $value | quote }}
+  {{- end }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mcp
+  labels: {{- include "hosted.labels" . | nindent 4 }}
+spec:
+  replicas: 1
+  selector:
+    matchLabels: {{- include "hosted.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels: {{- include "hosted.labels" . | nindent 8 }}
+    spec:
+      serviceAccountName: mcp
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile: { type: RuntimeDefault }
+      containers:
+        - name: mcp
+          image: "{{ required "image.repository is required" .Values.image.repository }}:{{ required "image.tag is required" .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          ports:
+            - { name: mcp, containerPort: {{ .Values.mcp.port }}, protocol: TCP }
+          env:
+            {{- range $name, $value := .Values.mcp.env }}
+            - name: {{ $name }}
+              value: {{ $value | quote }}
+            {{- end }}
+            {{- range $name, $_ := .Values.mcp.secretEnv }}
+            - name: {{ $name }}
+              valueFrom:
+                secretKeyRef: { name: mcp-env, key: {{ $name }} }
+            {{- end }}
+          readinessProbe:
+            tcpSocket: { port: mcp }
+            periodSeconds: 3
+            failureThreshold: 10
+          livenessProbe:
+            tcpSocket: { port: mcp }
+            periodSeconds: 10
+            failureThreshold: 3
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: { drop: ["ALL"] }
+          resources: {{- toYaml .Values.resources | nindent 12 }}
+          volumeMounts:
+            - { name: tmp, mountPath: /tmp }
+      volumes:
+        - name: tmp
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: mcp
+  labels: {{- include "hosted.labels" . | nindent 4 }}
+spec:
+  selector: {{- include "hosted.selectorLabels" . | nindent 4 }}
+  ports:
+    - { name: mcp, port: {{ .Values.mcp.port }}, targetPort: mcp }

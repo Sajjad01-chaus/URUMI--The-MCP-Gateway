@@ -31,6 +31,7 @@ export interface Server {
   has_credential: boolean;
   timeout_seconds: number;
   is_managed: boolean;
+  managed_kind: "store" | "hosted_mcp" | null;
   last_error: string | null;
   last_checked_at: string | null;
   tools: ServerTool[];
@@ -49,6 +50,43 @@ export interface Store {
   created_at: string | null;
   ready_at: string | null;
   built_in: boolean;
+}
+
+export type HostedStatus = "provisioning" | "ready" | "failed" | "deleting" | "deleted";
+
+export interface HostedServer {
+  id: string;
+  name: string;
+  slug: string;
+  image: string;
+  port: number;
+  path: string;
+  env: Record<string, string>;
+  secret_env_names: string[];
+  auth_type: Server["auth_type"];
+  auth_header_name: string | null;
+  credential_env: string | null;
+  internet_egress: boolean;
+  size: "small" | "medium";
+  status: HostedStatus;
+  reason: string;
+  created_at: string | null;
+  ready_at: string | null;
+}
+
+export interface HostedServerInput {
+  name: string;
+  slug: string;
+  image: string;
+  port: number;
+  path: string;
+  env: Record<string, string>;
+  secret_env: Record<string, string>;
+  auth_type: Server["auth_type"];
+  auth_header_name: string | null;
+  credential_env: string | null;
+  internet_egress: boolean;
+  size: "small" | "medium";
 }
 
 export interface ServerInput {
@@ -224,6 +262,12 @@ export const api = {
   createStore: (name: string, slug: string) => request<Store>("POST", "/stores", { name, slug }),
   retryStore: (id: string) => request<Store>("POST", `/stores/${id}/retry`),
   deleteStore: (id: string) => request<Store>("DELETE", `/stores/${id}`),
+
+  hostedServers: (include: "active" | "deleted" = "active") =>
+    request<HostedServer[]>("GET", `/hosted-servers${q({ include })}`),
+  deployHostedServer: (body: HostedServerInput) => request<HostedServer>("POST", "/hosted-servers", body),
+  retryHostedServer: (id: string) => request<HostedServer>("POST", `/hosted-servers/${id}/retry`),
+  deleteHostedServer: (id: string) => request<HostedServer>("DELETE", `/hosted-servers/${id}`),
 
   tools: () => request<CatalogTool[]>("GET", "/tools"),
   permissions: () => request<Permission[]>("GET", "/permissions"),

@@ -53,7 +53,7 @@ def to_state(row: UpstreamServer) -> UpstreamState:
         id=row.id, slug=row.slug, name=row.name, url=row.url, enabled=row.enabled,
         auth_type=row.auth_type, auth_header_name=row.auth_header_name,
         credential_encrypted=row.credential_encrypted, timeout_seconds=row.timeout_seconds,
-        is_managed=row.is_managed,
+        is_managed=row.is_managed, managed_kind=row.managed_kind,
     )
     if row.tools_cache:
         state.tools = [types.Tool.model_validate(t) for t in row.tools_cache]
@@ -159,9 +159,16 @@ class Registry:
         return self.catalog.servers[state.slug]
 
     async def ensure_managed(
-        self, release_id: uuid.UUID, name: str, url: str, credential: str
+        self,
+        release_id: uuid.UUID,
+        name: str,
+        url: str,
+        auth_type: Literal["none", "bearer", "header"],
+        credential: str | None,
+        auth_header_name: str | None = None,
     ) -> UpstreamState:
         """Create or recover the internal upstream for one ready managed release."""
+        validate_auth(auth_type, auth_header_name, credential, has_existing=False)
         await validate_url(url, self.settings)
         async with self.db.session() as session:
             release = await session.get(ManagedRelease, release_id)
@@ -179,16 +186,21 @@ class Registry:
                     slug=release.slug,
                     name=name,
                     url=url,
-                    auth_type="bearer",
-                    credential_encrypted=self.box.encrypt(credential),
+                    auth_type=auth_type,
+                    auth_header_name=auth_header_name if auth_type == "header" else None,
+                    credential_encrypted=self.box.encrypt(credential) if credential else None,
                     timeout_seconds=self.settings.default_call_timeout_seconds,
                     is_managed=True,
+                    managed_kind=release.kind,
                 )
                 session.add(row)
                 await session.flush()
                 log.info("registered managed upstream %s -> %s", release.slug, url)
             elif release.server_id not in (None, row.id):
                 raise RegistryError(f"managed release '{release.slug}' points to a different MCP server")
+            elif row.managed_kind not in (None, release.kind):
+                raise RegistryError(f"managed upstream '{release.slug}' belongs to a different release kind")
+            row.managed_kind = release.kind
             release.server_id = row.id
             release.status_reason = "MCP registration created; health check pending"
             release.updated_at = utcnow()

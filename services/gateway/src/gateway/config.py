@@ -77,6 +77,7 @@ class Settings(BaseSettings):
     provisioner_tls_enabled: bool = False
     provisioner_tls_issuer: str = ""
     provisioner_woo_mcp_image: str = "urumi/woo-mcp:dev"
+    hosted_mcp_allowed_registries: str = "ghcr.io/sajjad01-chaus,docker.io/mcp"
 
     @field_validator("session_secret", "chat_token_secret")
     @classmethod
@@ -101,6 +102,10 @@ class Settings(BaseSettings):
     @property
     def allowed_mcp_host_list(self) -> list[str]:
         return _split(self.allowed_mcp_hosts)
+
+    @property
+    def hosted_mcp_allowed_registry_list(self) -> list[str]:
+        return _split(self.hosted_mcp_allowed_registries)
 
 
 def _split(value: str) -> list[str]:

@@ -98,12 +98,20 @@ class Provisioner:
                 return
 
             release_secrets = json.loads(self.box.decrypt(row.secrets_encrypted))
-            await self.repository.status(row.id, "installing store chart")
+            await self.repository.status(
+                row.id,
+                "installing store chart" if row.kind == "store" else "installing hosted MCP chart",
+            )
             timeout = seconds_until(row.deadline_at)
             if timeout == 0:
                 raise HelmError("provisioning deadline expired")
-            await self._with_lease(row, self.helm.install_store(row, release_secrets, self.kube, timeout))
-            await self.repository.ready(row.id)
+            operation = (
+                self.helm.install_store(row, release_secrets, self.kube, timeout)
+                if row.kind == "store"
+                else self.helm.install_hosted(row, release_secrets, self.kube, timeout)
+            )
+            await self._with_lease(row, operation)
+            await self.repository.ready(row.id, row.kind)
             log.info("managed release %s is ready", row.slug)
         except DeletionRequested:
             log.info("managed release %s switched to deletion", row.slug)

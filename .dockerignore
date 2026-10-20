@@ -14,3 +14,5 @@
 !deploy/charts/
 !deploy/charts/woo-store/
 !deploy/charts/woo-store/**
+!deploy/charts/hosted-mcp/
+!deploy/charts/hosted-mcp/**

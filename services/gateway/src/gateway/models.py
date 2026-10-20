@@ -85,6 +85,7 @@ class UpstreamServer(Base):
     tools_cache: Mapped[list | None] = mapped_column(JSON)
     is_seeded: Mapped[bool] = mapped_column(Boolean, default=False)
     is_managed: Mapped[bool] = mapped_column(Boolean, default=False)
+    managed_kind: Mapped[str | None] = mapped_column(String(20))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
 

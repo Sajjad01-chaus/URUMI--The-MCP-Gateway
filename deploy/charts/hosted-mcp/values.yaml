@@ -1,0 +1,35 @@
+image:
+  repository: ""
+  tag: ""
+  pullPolicy: IfNotPresent
+
+mcp:
+  port: 8000
+  env: {}
+  secretEnv: {}
+
+internetEgress: false
+
+resources:
+  requests: { cpu: 100m, memory: 128Mi }
+  limits: { cpu: 500m, memory: 256Mi }
+
+quota:
+  requestsCpu: 500m
+  requestsMemory: 512Mi
+  limitsCpu: "1"
+  limitsMemory: 1Gi
+  pods: 3
+
+networkPolicy:
+  gatewayNamespace: platform
+  dnsNamespace: kube-system
+  dnsPodLabels:
+    k8s-app: kube-dns
+  blockedEgressCidrs:
+    - 10.0.0.0/8
+    - 172.16.0.0/12
+    - 192.168.0.0/16
+    - 169.254.0.0/16
+    - 100.64.0.0/10
+    - 127.0.0.0/8

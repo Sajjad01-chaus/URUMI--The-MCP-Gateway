@@ -83,6 +83,8 @@ spec:
               value: {{ .Values.provisioner.teardownTimeoutMinutes | quote }}
             - name: PROVISIONER_WOO_MCP_IMAGE
               value: {{ .Values.provisioner.wooMcpImage | quote }}
+            - name: HOSTED_MCP_ALLOWED_REGISTRIES
+              value: {{ join "," .Values.hostedMcp.allowedRegistries | quote }}
             - name: HELM_CACHE_HOME
               value: /tmp/helm/cache
             - name: HELM_CONFIG_HOME

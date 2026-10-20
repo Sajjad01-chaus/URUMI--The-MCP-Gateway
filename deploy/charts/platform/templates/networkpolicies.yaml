@@ -126,7 +126,9 @@ spec:
             matchLabels:
               urumi.io/mcp-upstream: "true"
       ports:
-        - port: 8000
+        - port: 1024
+          endPort: 65535
+          protocol: TCP
     - to:
         - ipBlock:
             cidr: 0.0.0.0/0

@@ -73,3 +73,4 @@ jobs:
               helm lint "deploy/charts/$chart" -f "deploy/values/$chart/values-$env.yaml" -f deploy/secrets/secrets.example.yaml
             done
           done
+          helm lint deploy/charts/hosted-mcp --set image.repository=ghcr.io/sajjad01-chaus/urumi-fx-mcp --set image.tag=test

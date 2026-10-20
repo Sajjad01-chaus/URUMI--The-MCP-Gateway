@@ -29,7 +29,7 @@ gateway:
   # Larger upstream tool results are replaced by an error (protects clients and the model's context).
   maxResultBytes: 262144
   # SSRF guard: private addresses are allowed only for these host patterns.
-  allowedInternalHosts: "*.store-*.svc.cluster.local,*-mcp.platform.svc.cluster.local"
+  allowedInternalHosts: "*.store-*.svc.cluster.local,mcp.mcp-*.svc.cluster.local,*-mcp.platform.svc.cluster.local"
   seedServers:
     - slug: woo
       name: WooCommerce (main store)
@@ -74,6 +74,11 @@ provisioner:
   resources:
     requests: { cpu: 50m, memory: 96Mi }
     limits: { cpu: 500m, memory: 256Mi }
+
+hostedMcp:
+  allowedRegistries:
+    - ghcr.io/sajjad01-chaus
+    - docker.io/mcp
 
 # Chat agent: any OpenAI-compatible Chat Completions API (Groq by default; Ollama/OpenAI by changing these).
 llm:

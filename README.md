@@ -137,7 +137,8 @@ Step-by-step guide, including the Azure for Students pitfalls: [docs/vps-setup.m
 | Stand-out 8: observability (partial) | Done: clear reasons why an upstream is unreachable or a call failed, in the dashboard and in tool errors | Servers page, `services/gateway/src/gateway/upstream.py` |
 | Stand-out 9: upgrades and rollback (documented) | Done: SHA-tagged images, `helm history` / `helm rollback`, expand/contract migrations | [docs/vps-setup.md](docs/vps-setup.md) (day-2 operations) |
 | Bonus: multi-store provisioning | Done locally: concurrent isolated stores, automatic MCP registration, Stores dashboard, quotas/recovery, unregister-before-teardown and tenant NetworkPolicy tests | `services/provisioner`, dashboard **Stores** page, `scripts/phase10_2_gate.py`, [v2 design](docs/design/v2-system-design.md) |
-| Remaining v2 stand-outs | In progress: hosted MCP servers, metrics, live rollback, tool search for many tools, egress lockdown + rate limits | [v2 design](docs/design/v2-system-design.md) |
+| Stand-out 5: hosted MCP servers | Done locally: admin image deployment, allow-listed pinned images, encrypted write-only secrets, automatic registration, hardened isolated namespaces, failure diagnosis and clean teardown | `deploy/charts/hosted-mcp`, dashboard **Servers** page, `scripts/phase10_3_gate.py`, [v2 design](docs/design/v2-system-design.md) |
+| Remaining v2 stand-outs | In progress: metrics, live rollback, tool search for many tools, egress lockdown + rate limits | [v2 design](docs/design/v2-system-design.md) |
 
 ---
 
@@ -145,7 +146,7 @@ Step-by-step guide, including the Azure for Students pitfalls: [docs/vps-setup.m
 
 | What | How | Result |
 |---|---|---|
-| Unit + integration | `uv run pytest` in each Python service | gateway 61, woo-mcp 13, notes-mcp 3, fx-mcp 3 |
+| Unit + integration | `uv run pytest` in each Python service | gateway 63, woo-mcp 13, notes-mcp 3, fx-mcp 3 |
 | Acceptance (demo script, design §15) | `bash scripts/acceptance.sh [domain] [--prod]` | 59/59 locally from an empty cluster and on production |
 | Network isolation | `bash scripts/netpol-test.sh [domain]` (part of acceptance) | v1 28/28; tenant-expanded gate 33/33 plus direct cross-tenant denials |
 

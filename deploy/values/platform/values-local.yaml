@@ -8,3 +8,8 @@ provisioner:
   apiServerCidrs:
     - 10.43.0.1/32
     - 172.18.0.0/16
+
+hostedMcp:
+  allowedRegistries:
+    - urumi
+    - docker.io/library

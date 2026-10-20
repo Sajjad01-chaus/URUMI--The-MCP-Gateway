@@ -8,7 +8,7 @@ from pathlib import Path
 
 from ..config import Settings
 from ..models import ManagedRelease
-from .kubernetes import KubernetesClient
+from .kubernetes import KubernetesClient, KubernetesError
 
 log = logging.getLogger(__name__)
 
@@ -134,6 +134,63 @@ class HelmClient:
         finally:
             await asyncio.to_thread(Path(values_path).unlink, missing_ok=True)
         await kube.verify_store(row.namespace)
+
+    def hosted_values(self, row: ManagedRelease, release_secrets: dict[str, str]) -> dict:
+        image, tag = row.spec["image"].rsplit(":", 1)
+        resources = {
+            "small": {
+                "requests": {"cpu": "100m", "memory": "128Mi"},
+                "limits": {"cpu": "500m", "memory": "256Mi"},
+            },
+            "medium": {
+                "requests": {"cpu": "250m", "memory": "256Mi"},
+                "limits": {"cpu": "1", "memory": "512Mi"},
+            },
+        }[row.spec.get("size", "small")]
+        return {
+            "image": {"repository": image, "tag": tag},
+            "mcp": {
+                "port": row.spec["port"],
+                "env": row.spec.get("env", {}),
+                "secretEnv": release_secrets,
+            },
+            "internetEgress": row.spec.get("internet_egress", False),
+            "resources": resources,
+        }
+
+    async def install_hosted(
+        self,
+        row: ManagedRelease,
+        release_secrets: dict[str, str],
+        kube: KubernetesClient,
+        timeout_seconds: int,
+    ) -> None:
+        await kube.ensure_tenant_namespace(row.namespace, row.slug)
+        await self.recover_pending(row)
+        values = self.hosted_values(row, release_secrets)
+        secret_values = list(release_secrets.values())
+        fd, values_path = tempfile.mkstemp(
+            prefix=f"{row.slug}-", suffix=".json", dir=self.settings.provisioner_temp_dir
+        )
+        try:
+            os.chmod(values_path, 0o600)
+            with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as handle:
+                json.dump(values, handle)
+            try:
+                await self.runner.run(
+                    [
+                        "helm", "upgrade", "--install", row.release,
+                        str(Path(self.settings.provisioner_chart_root) / "hosted-mcp"),
+                        "-n", row.namespace, "-f", values_path,
+                    ],
+                    secret_values,
+                )
+                await kube.wait_hosted_ready(row.namespace, timeout_seconds)
+            except (HelmError, KubernetesError) as exc:
+                diagnosis = await kube.hosted_failure_reason(row.namespace)
+                raise HelmError(diagnosis or str(exc)) from exc
+        finally:
+            await asyncio.to_thread(Path(values_path).unlink, missing_ok=True)
 
     async def uninstall(self, row: ManagedRelease, kube: KubernetesClient) -> None:
         try:
