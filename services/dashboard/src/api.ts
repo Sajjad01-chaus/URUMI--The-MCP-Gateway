@@ -30,9 +30,25 @@ export interface Server {
   auth_header_name: string | null;
   has_credential: boolean;
   timeout_seconds: number;
+  is_managed: boolean;
   last_error: string | null;
   last_checked_at: string | null;
   tools: ServerTool[];
+}
+
+export type StoreStatus = "provisioning" | "ready" | "failed" | "deleting" | "deleted";
+
+export interface Store {
+  id: string;
+  name: string;
+  slug: string;
+  owner_email: string | null;
+  status: StoreStatus;
+  reason: string;
+  url: string;
+  created_at: string | null;
+  ready_at: string | null;
+  built_in: boolean;
 }
 
 export interface ServerInput {
@@ -203,6 +219,11 @@ export const api = {
   updateServer: (id: string, data: Partial<ServerInput>) => request<Server>("PATCH", `/servers/${id}`, data),
   deleteServer: (id: string) => request<void>("DELETE", `/servers/${id}`),
   testServer: (id: string) => request<Server>("POST", `/servers/${id}/test`),
+
+  stores: (include: "active" | "deleted" = "active") => request<Store[]>("GET", `/stores${q({ include })}`),
+  createStore: (name: string, slug: string) => request<Store>("POST", "/stores", { name, slug }),
+  retryStore: (id: string) => request<Store>("POST", `/stores/${id}/retry`),
+  deleteStore: (id: string) => request<Store>("DELETE", `/stores/${id}`),
 
   tools: () => request<CatalogTool[]>("GET", "/tools"),
   permissions: () => request<Permission[]>("GET", "/permissions"),

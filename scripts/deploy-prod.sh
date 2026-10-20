@@ -42,6 +42,8 @@ step "Let's Encrypt cluster issuers"
 kubectl apply -f "$ROOT/deploy/prod/cluster-issuers.yaml"
 
 step "store chart (store-main)"
+kubectl get namespace store-main >/dev/null 2>&1 || kubectl create namespace store-main
+kubectl label namespace store-main urumi.io/mcp-upstreams=true --overwrite >/dev/null
 helm upgrade --install store-main "$ROOT/deploy/charts/woo-store" -n store-main --create-namespace \
   -f "$ROOT/deploy/values/woo-store/values-prod.yaml" -f "$SECRETS" \
   --set global.tls.clusterIssuer="$ISSUER" \
@@ -49,6 +51,8 @@ helm upgrade --install store-main "$ROOT/deploy/charts/woo-store" -n store-main 
   --wait --timeout 15m
 
 step "platform chart (platform)"
+kubectl get namespace platform >/dev/null 2>&1 || kubectl create namespace platform
+kubectl label namespace platform urumi.io/mcp-upstreams=true --overwrite >/dev/null
 helm upgrade --install platform "$ROOT/deploy/charts/platform" -n platform --create-namespace \
   -f "$ROOT/deploy/values/platform/values-prod.yaml" -f "$SECRETS" \
   --set global.tls.clusterIssuer="$ISSUER" \

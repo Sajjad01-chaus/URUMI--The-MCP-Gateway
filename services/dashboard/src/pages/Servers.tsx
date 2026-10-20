@@ -51,7 +51,10 @@ export default function ServersPage() {
               {servers.data?.map((s) => (
                 <tr key={s.id} className="clickable" onClick={() => setSelected(s)}>
                   <td>
-                    <div className="cell-main">{s.name} <span className="chip">{s.slug}</span></div>
+                    <div className="cell-main">
+                      {s.name} <span className="chip">{s.slug}</span>{" "}
+                      {s.is_managed && <span className="badge badge-blue">managed</span>}
+                    </div>
                     <div className="cell-sub">{s.url}</div>
                   </td>
                   <td>
@@ -72,8 +75,8 @@ export default function ServersPage() {
                     <td onClick={(e) => e.stopPropagation()}>
                       <div className="row-actions">
                         <button className="button button-small" disabled={action.busy} onClick={() => void test(s)}>Test now</button>
-                        <button className="button button-small" onClick={() => setEditing(s)}>Edit</button>
-                        <button className="button button-small button-danger" onClick={() => setDeleting(s)}>Delete</button>
+                        {!s.is_managed && <button className="button button-small" onClick={() => setEditing(s)}>Edit</button>}
+                        {!s.is_managed && <button className="button button-small button-danger" onClick={() => setDeleting(s)}>Delete</button>}
                       </div>
                     </td>
                   )}
@@ -137,6 +140,7 @@ function ServerDrawer({ server, onClose }: { server: Server; onClose: () => void
             {server.has_credential && <span className="muted"> · •••• set</span>}
           </dd>
           <dt>Call timeout</dt><dd>{server.timeout_seconds}s</dd>
+          <dt>Managed</dt><dd>{server.is_managed ? "Created automatically from Stores" : "Manual"}</dd>
         </dl>
         <h3 style={{ marginTop: 22 }}>Tools ({server.tools.length})</h3>
         {server.tools.length === 0 && <p className="muted">No tools known yet (the server has never answered).</p>}

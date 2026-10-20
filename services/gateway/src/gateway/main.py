@@ -23,6 +23,7 @@ from .mcp_gateway import build_mcp_server
 from .registry import Registry
 from .security import CredentialBox
 from .sessions import LoginThrottle
+from .store_sync import StoreSync
 from .team import router as team_router
 from .upstream import Connector, http_connector
 
@@ -39,6 +40,7 @@ class Services:
     hub: SessionHub
     registry: Registry
     monitor: HealthMonitor
+    store_sync: StoreSync
     resolve_api_key: Resolver
     throttle: LoginThrottle
     chat: ChatAgent
@@ -61,12 +63,16 @@ def create_app(
         catalog, registry, connector, hub,
         settings.health_interval_seconds, settings.health_timeout_seconds, settings.unreachable_after_failures,
     )
+    store_sync = StoreSync(db, box, catalog, registry, monitor, settings.provisioner_poll_seconds)
     resolve_api_key = api_key_resolver(db)
     owned_llm = None if llm else OpenAICompatibleLLM(
         settings.llm_base_url, settings.llm_api_key, settings.llm_model, settings.llm_timeout_seconds
     )
     chat_agent = ChatAgent(settings, llm or owned_llm)
-    svc = Services(settings, db, box, catalog, hub, registry, monitor, resolve_api_key, LoginThrottle(), chat_agent)
+    svc = Services(
+        settings, db, box, catalog, hub, registry, monitor, store_sync,
+        resolve_api_key, LoginThrottle(), chat_agent,
+    )
 
     auditor = Auditor(db)
     mcp_server = build_mcp_server(catalog, hub, auditor, box, connector, settings.max_result_bytes)
@@ -84,12 +90,17 @@ def create_app(
         await registry.seed()
         await registry.load()
         async with mcp_server.session_manager.run():
-            task = asyncio.create_task(monitor.run()) if run_monitor else None
+            tasks = (
+                [asyncio.create_task(monitor.run()), asyncio.create_task(store_sync.run())]
+                if run_monitor else []
+            )
             try:
                 yield
             finally:
-                if task:
+                for task in tasks:
                     task.cancel()
+                if tasks:
+                    await asyncio.gather(*tasks, return_exceptions=True)
         if owned_llm:
             await owned_llm.aclose()
         await db.dispose()

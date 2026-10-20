@@ -88,6 +88,7 @@ code, pre { font-family: var(--mono); font-size: 12.5px; }
 .page-header { display: flex; justify-content: space-between; align-items: flex-start; gap: 16px; margin-bottom: 20px; flex-wrap: wrap; }
 .page-header p { margin: 4px 0 0; }
 .page-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+.store-tabs { margin-bottom: 12px; }
 .page-loading { padding: 48px; text-align: center; color: var(--muted); }
 
 /* Cards & tables */

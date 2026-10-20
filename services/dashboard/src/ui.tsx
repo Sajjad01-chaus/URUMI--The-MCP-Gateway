@@ -66,8 +66,15 @@ export function Badge({ tone, children }: { tone: "green" | "red" | "amber" | "g
 }
 
 export function StatusBadge({ status }: { status: string }) {
-  const tone = { connected: "green", unreachable: "red", disabled: "gray", unknown: "amber" }[status] ?? "gray";
-  const label = { connected: "Connected", unreachable: "Unreachable", disabled: "Disabled", unknown: "Checking…" }[status] ?? status;
+  const tone = {
+    connected: "green", ready: "green", unreachable: "red", failed: "red", disabled: "gray",
+    deleted: "gray", unknown: "amber", deleting: "amber", provisioning: "blue",
+  }[status] ?? "gray";
+  const label = {
+    connected: "Connected", ready: "Ready", unreachable: "Unreachable", failed: "Failed",
+    disabled: "Disabled", deleted: "Deleted", unknown: "Checking…", deleting: "Deleting…",
+    provisioning: "Provisioning…",
+  }[status] ?? status;
   return <Badge tone={tone as "green"}>{label}</Badge>;
 }
 

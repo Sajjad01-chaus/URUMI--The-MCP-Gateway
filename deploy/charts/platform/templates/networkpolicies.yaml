@@ -120,10 +120,8 @@ spec:
         - port: 5432
     - to:
         - namespaceSelector:
-            matchExpressions:
-              - key: kubernetes.io/metadata.name
-                operator: In
-                values: {{- toYaml .Values.gateway.upstreamNamespaces | nindent 18 }}
+            matchLabels:
+              urumi.io/mcp-upstreams: "true"
           podSelector:
             matchLabels:
               urumi.io/mcp-upstream: "true"

@@ -15,6 +15,7 @@ from .auth import Principal
 from .db import advisory_xact_lock
 from .deps import current_principal, services
 from .models import ManagedRelease, UpstreamServer, User, utcnow
+from .registry import RegistryError
 
 log = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/stores", tags=["stores"])
@@ -248,13 +249,16 @@ async def delete_store(
         row, owner = await _owned_release(session, release_id, principal)
         if row.status == "deleted":
             return release_out(row, owner, svc.settings)
-        row.desired = "absent"
-        row.status = "deleting"
-        row.status_reason = "queued for deletion"
-        row.deadline_at = utcnow() + timedelta(minutes=svc.settings.provisioner_teardown_timeout_minutes)
-        row.lease_owner = None
-        row.lease_until = None
-        await session.commit()
-        await session.refresh(row)
+    before = svc.catalog.visibility_signature()
+    try:
+        await svc.registry.queue_managed_deletion(
+            release_id,
+            utcnow() + timedelta(minutes=svc.settings.provisioner_teardown_timeout_minutes),
+        )
+    except RegistryError as exc:
+        raise HTTPException(409, str(exc)) from exc
+    await svc.monitor.notify_if_changed(before)
+    async with svc.db.session() as session:
+        row, owner = await _owned_release(session, release_id, principal)
     log.info("%s requested deletion of store %s", principal.email, row.slug)
     return release_out(row, owner, svc.settings)

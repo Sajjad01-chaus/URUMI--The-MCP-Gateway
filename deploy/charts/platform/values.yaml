@@ -30,8 +30,6 @@ gateway:
   maxResultBytes: 262144
   # SSRF guard: private addresses are allowed only for these host patterns.
   allowedInternalHosts: "*.store-*.svc.cluster.local,*-mcp.platform.svc.cluster.local"
-  # Egress NetworkPolicy: namespaces whose MCP pods the gateway may call on :8000.
-  upstreamNamespaces: [platform, store-main]
   seedServers:
     - slug: woo
       name: WooCommerce (main store)

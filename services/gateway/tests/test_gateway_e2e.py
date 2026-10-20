@@ -72,6 +72,7 @@ class Gateway:
     admin_key: str
     member_key: str
     dead: set
+    upstreams: dict[str, MCPServer]
 
 
 @pytest.fixture
@@ -114,11 +115,18 @@ async def gw(tmp_path):
 
     server = uvicorn.Server(uvicorn.Config(app, host="127.0.0.1", port=0, log_level="warning"))
     task = asyncio.create_task(server.serve())
-    while not server.started:
+    for _ in range(200):
+        if server.started:
+            break
+        if task.done():
+            await task
         await asyncio.sleep(0.05)
+    else:
+        task.cancel()
+        raise TimeoutError("test gateway did not start within 10 seconds")
     port = server.servers[0].sockets[0].getsockname()[1]
     await svc.monitor.check_all()
-    yield Gateway(f"http://127.0.0.1:{port}", svc, keys["admin"], keys["member"], dead)
+    yield Gateway(f"http://127.0.0.1:{port}", svc, keys["admin"], keys["member"], dead, upstreams)
     server.should_exit = True
     await task
 

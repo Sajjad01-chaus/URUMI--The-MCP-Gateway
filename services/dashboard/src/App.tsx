@@ -10,6 +10,7 @@ import LoginPage from "./pages/Login";
 import MembersPage from "./pages/Members";
 import PermissionsPage from "./pages/Permissions";
 import ServersPage from "./pages/Servers";
+import StoresPage from "./pages/Stores";
 import ToolsPage from "./pages/Tools";
 import { RoleBadge } from "./ui";
 
@@ -27,6 +28,7 @@ function Layout() {
         </div>
         <div className="nav-section">Gateway</div>
         <NavLink to="/chat" className={link}>Chat</NavLink>
+        <NavLink to="/stores" className={link}>Stores</NavLink>
         <NavLink to="/servers" className={link}>Servers</NavLink>
         <NavLink to="/tools" className={link}>Tools</NavLink>
         {isAdmin && <NavLink to="/permissions" className={link}>Tool permissions</NavLink>}
@@ -57,6 +59,7 @@ export default function App() {
       <Route path="/invite/:token" element={<AcceptInvitePage />} />
       <Route element={<RequireAuth><Layout /></RequireAuth>}>
         <Route path="/chat" element={<ChatPage />} />
+        <Route path="/stores" element={<StoresPage />} />
         <Route path="/servers" element={<ServersPage />} />
         <Route path="/tools" element={<ToolsPage />} />
         <Route path="/permissions" element={<RequireAuth admin><PermissionsPage /></RequireAuth>} />

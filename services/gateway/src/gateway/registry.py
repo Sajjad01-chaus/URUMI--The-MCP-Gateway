@@ -2,6 +2,7 @@ import logging
 import os
 import re
 import uuid
+from datetime import datetime
 from typing import Literal
 
 from mcp import types
@@ -52,6 +53,7 @@ def to_state(row: UpstreamServer) -> UpstreamState:
         id=row.id, slug=row.slug, name=row.name, url=row.url, enabled=row.enabled,
         auth_type=row.auth_type, auth_header_name=row.auth_header_name,
         credential_encrypted=row.credential_encrypted, timeout_seconds=row.timeout_seconds,
+        is_managed=row.is_managed,
     )
     if row.tools_cache:
         state.tools = [types.Tool.model_validate(t) for t in row.tools_cache]
@@ -155,6 +157,91 @@ class Registry:
         state = to_state(row)
         self.catalog.upsert(state)
         return self.catalog.servers[state.slug]
+
+    async def ensure_managed(
+        self, release_id: uuid.UUID, name: str, url: str, credential: str
+    ) -> UpstreamState:
+        """Create or recover the internal upstream for one ready managed release."""
+        await validate_url(url, self.settings)
+        async with self.db.session() as session:
+            release = await session.get(ManagedRelease, release_id)
+            if release is None:
+                raise RegistryError("managed release no longer exists")
+            await advisory_xact_lock(session, f"upstream-slug:{release.slug}")
+            await session.refresh(release)
+            if release.desired != "present" or release.status != "ready":
+                raise RegistryError("managed release is not ready for registration")
+            row = await session.scalar(select(UpstreamServer).where(UpstreamServer.slug == release.slug))
+            if row is not None and not row.is_managed:
+                raise RegistryError(f"slug '{release.slug}' is already used by a manual MCP server")
+            if row is None:
+                row = UpstreamServer(
+                    slug=release.slug,
+                    name=name,
+                    url=url,
+                    auth_type="bearer",
+                    credential_encrypted=self.box.encrypt(credential),
+                    timeout_seconds=self.settings.default_call_timeout_seconds,
+                    is_managed=True,
+                )
+                session.add(row)
+                await session.flush()
+                log.info("registered managed upstream %s -> %s", release.slug, url)
+            elif release.server_id not in (None, row.id):
+                raise RegistryError(f"managed release '{release.slug}' points to a different MCP server")
+            release.server_id = row.id
+            release.status_reason = "MCP registration created; health check pending"
+            release.updated_at = utcnow()
+            await session.commit()
+        state = to_state(row)
+        self.catalog.upsert(state)
+        return self.catalog.servers[state.slug]
+
+    async def unregister_managed(self, release_id: uuid.UUID) -> str | None:
+        """Remove a release's managed upstream without changing its desired state."""
+        async with self.db.session() as session:
+            release = await session.get(ManagedRelease, release_id)
+            if release is None:
+                return None
+            await advisory_xact_lock(session, f"upstream-slug:{release.slug}")
+            await session.refresh(release)
+            row = await session.scalar(select(UpstreamServer).where(UpstreamServer.slug == release.slug))
+            if row is not None and not row.is_managed:
+                raise RegistryError(f"slug '{release.slug}' belongs to a manual MCP server")
+            release.server_id = None
+            if row is not None:
+                await session.delete(row)
+            await session.commit()
+        if row is not None:
+            self.catalog.remove(release.slug)
+            log.info("unregistered managed upstream %s", release.slug)
+        return release.slug if row is not None else None
+
+    async def queue_managed_deletion(self, release_id: uuid.UUID, deadline_at: datetime) -> str:
+        """Atomically unregister a managed upstream and queue its infrastructure teardown."""
+        async with self.db.session() as session:
+            release = await session.get(ManagedRelease, release_id)
+            if release is None:
+                raise KeyError(release_id)
+            await advisory_xact_lock(session, f"upstream-slug:{release.slug}")
+            await session.refresh(release)
+            row = await session.scalar(select(UpstreamServer).where(UpstreamServer.slug == release.slug))
+            if row is not None and not row.is_managed:
+                raise RegistryError(f"slug '{release.slug}' belongs to a manual MCP server")
+            if row is not None:
+                await session.delete(row)
+            release.server_id = None
+            release.desired = "absent"
+            release.status = "deleting"
+            release.status_reason = "MCP server removed; infrastructure teardown queued"
+            release.deadline_at = deadline_at
+            release.lease_owner = None
+            release.lease_until = None
+            release.updated_at = utcnow()
+            await session.commit()
+        self.catalog.remove(release.slug)
+        log.info("unregistered managed upstream %s and queued teardown", release.slug)
+        return release.slug
 
     async def update(self, server_id: uuid.UUID, patch: ServerPatch) -> UpstreamState:
         async with self.db.session() as session:

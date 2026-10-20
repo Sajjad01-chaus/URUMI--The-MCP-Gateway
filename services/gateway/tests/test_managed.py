@@ -1,12 +1,13 @@
 import json
 import uuid
+from datetime import timedelta
 
 import httpx2
 from sqlalchemy import select
 from test_gateway_e2e import gw  # noqa: F401
 
 from gateway.managed import generate_store_secrets
-from gateway.models import ManagedRelease
+from gateway.models import ManagedRelease, UpstreamServer
 
 
 async def test_store_lifecycle_is_idempotent_encrypted_and_owner_scoped(gw):
@@ -88,3 +89,59 @@ def test_generated_store_secrets_are_unique_and_complete():
         "wooMcpToken",
     }
     assert first["mysqlPassword"] != second["mysqlPassword"]
+
+
+async def test_ready_store_is_registered_recovered_and_removed_through_store_api(gw):
+    headers = {"Authorization": f"Bearer {gw.admin_key}"}
+    gw.upstreams["london"] = gw.upstreams["woo"]
+    async with httpx2.AsyncClient(base_url=gw.url, headers=headers) as http:
+        created = (await http.post("/api/stores", json={"name": "London Shop", "slug": "london"})).json()
+        release_id = uuid.UUID(created["id"])
+        async with gw.svc.db.session() as session:
+            row = await session.get(ManagedRelease, release_id)
+            row.status = "ready"
+            row.status_reason = "store resources are ready"
+            session.add(ManagedRelease(
+                kind="store",
+                slug="london",
+                display_name="Previous London Shop",
+                namespace="store-london",
+                release="store-london",
+                owner_id=row.owner_id,
+                desired="absent",
+                status="deleted",
+                status_reason="resources removed",
+                spec={"profile": "tenant"},
+                secrets_encrypted=row.secrets_encrypted,
+                deadline_at=row.deadline_at + timedelta(minutes=5),
+            ))
+            await session.commit()
+
+        await gw.svc.store_sync.reconcile()
+        state = gw.svc.catalog.servers["london"]
+        assert state.is_managed and state.status == "connected"
+        assert {tool.name for tool in state.tools} == {"list_orders", "create_product", "search"}
+        async with gw.svc.db.session() as session:
+            row = await session.get(ManagedRelease, release_id)
+            server = await session.get(UpstreamServer, row.server_id)
+            assert server and server.is_managed and server.auth_type == "bearer"
+
+        servers = (await http.get("/api/servers")).json()
+        managed = next(server for server in servers if server["slug"] == "london")
+        assert managed["is_managed"] is True
+        assert (await http.patch(f"/api/servers/{managed['id']}", json={"name": "Nope"})).status_code == 409
+        disabled = await http.patch(f"/api/servers/{managed['id']}", json={"enabled": False})
+        assert disabled.status_code == 200 and disabled.json()["status"] == "disabled"
+        assert (await http.delete(f"/api/servers/{managed['id']}")).status_code == 409
+
+        gw.svc.catalog.remove("london")
+        await gw.svc.store_sync.reconcile()
+        assert gw.svc.catalog.servers["london"].is_managed
+
+        deleted = await http.delete(f"/api/stores/{release_id}")
+        assert deleted.status_code == 202 and deleted.json()["status"] == "deleting"
+        assert "london" not in gw.svc.catalog.servers
+        async with gw.svc.db.session() as session:
+            row = await session.get(ManagedRelease, release_id)
+            server = await session.scalar(select(UpstreamServer).where(UpstreamServer.slug == "london"))
+            assert row.server_id is None and row.desired == "absent" and server is None

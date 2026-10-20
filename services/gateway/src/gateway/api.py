@@ -38,6 +38,7 @@ class ServerOut(BaseModel):
     auth_header_name: str | None
     has_credential: bool
     timeout_seconds: int
+    is_managed: bool
     last_error: str | None
     last_checked_at: datetime | None
     tools: list[ToolOut]
@@ -48,6 +49,7 @@ def server_out(svc, state: UpstreamState) -> ServerOut:
         id=state.id, slug=state.slug, name=state.name, url=state.url, enabled=state.enabled,
         status=state.display_status, auth_type=state.auth_type, auth_header_name=state.auth_header_name,
         has_credential=state.credential_encrypted is not None, timeout_seconds=state.timeout_seconds,
+        is_managed=state.is_managed,
         last_error=state.last_error, last_checked_at=state.last_checked_at,
         tools=[
             ToolOut(
@@ -105,7 +107,9 @@ async def create_server(data: ServerIn, request: Request, admin: Principal = Dep
 @router.patch("/api/servers/{server_id}", response_model=ServerOut)
 async def update_server(server_id: uuid.UUID, patch: ServerPatch, request: Request, admin: Principal = Depends(require_admin)):
     svc = services(request)
-    find(svc, server_id)
+    current = find(svc, server_id)
+    if current.is_managed and patch.model_fields_set - {"enabled"}:
+        raise HTTPException(409, "managed servers can only be enabled or disabled here; edit the store from Stores")
     before = svc.catalog.visibility_signature()
     try:
         state = await svc.registry.update(server_id, patch)
@@ -121,7 +125,9 @@ async def update_server(server_id: uuid.UUID, patch: ServerPatch, request: Reque
 @router.delete("/api/servers/{server_id}", status_code=204)
 async def delete_server(server_id: uuid.UUID, request: Request, admin: Principal = Depends(require_admin)):
     svc = services(request)
-    find(svc, server_id)
+    current = find(svc, server_id)
+    if current.is_managed:
+        raise HTTPException(409, "delete managed servers from Stores")
     before = svc.catalog.visibility_signature()
     slug = await svc.registry.delete(server_id)
     log.info("%s deleted server %s", admin.email, slug)

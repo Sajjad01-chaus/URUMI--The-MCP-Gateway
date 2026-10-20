@@ -136,7 +136,8 @@ Step-by-step guide, including the Azure for Students pitfalls: [docs/vps-setup.m
 | Stand-out 6: security hardening | Done: SSRF guard on upstream URLs (checked at save and at every connect), upstream credentials Fernet-encrypted at rest and write-only, default-deny ingress NetworkPolicies, gateway egress policy (no Kubernetes API, no cloud metadata), non-root read-only containers, upstream response-size cap | `services/gateway/src/gateway/ssrf.py`, `security.py`, `deploy/charts/*/templates/networkpolicies.yaml`, [threat model](docs/threat-model.md) |
 | Stand-out 8: observability (partial) | Done: clear reasons why an upstream is unreachable or a call failed, in the dashboard and in tool errors | Servers page, `services/gateway/src/gateway/upstream.py` |
 | Stand-out 9: upgrades and rollback (documented) | Done: SHA-tagged images, `helm history` / `helm rollback`, expand/contract migrations | [docs/vps-setup.md](docs/vps-setup.md) (day-2 operations) |
-| Bonus + more stand-outs | In progress (v2): multi-store provisioning, hosted MCP servers, metrics, live rollback, tool search for many tools, egress lockdown + rate limits | [v2 design](docs/design/v2-system-design.md) |
+| Bonus: multi-store provisioning | Done locally: concurrent isolated stores, automatic MCP registration, Stores dashboard, quotas/recovery, unregister-before-teardown and tenant NetworkPolicy tests | `services/provisioner`, dashboard **Stores** page, `scripts/phase10_2_gate.py`, [v2 design](docs/design/v2-system-design.md) |
+| Remaining v2 stand-outs | In progress: hosted MCP servers, metrics, live rollback, tool search for many tools, egress lockdown + rate limits | [v2 design](docs/design/v2-system-design.md) |
 
 ---
 
@@ -144,9 +145,9 @@ Step-by-step guide, including the Azure for Students pitfalls: [docs/vps-setup.m
 
 | What | How | Result |
 |---|---|---|
-| Unit + integration | `uv run pytest` in each Python service | gateway 51, woo-mcp 13, notes-mcp 3, fx-mcp 3 |
+| Unit + integration | `uv run pytest` in each Python service | gateway 61, woo-mcp 13, notes-mcp 3, fx-mcp 3 |
 | Acceptance (demo script, design §15) | `bash scripts/acceptance.sh [domain] [--prod]` | 59/59 locally from an empty cluster and on production |
-| Network isolation | `bash scripts/netpol-test.sh [domain]` (part of acceptance) | 28/28: 12 allowed paths, 16 denied (incl. gateway → Kubernetes API, cloud metadata, MySQL) |
+| Network isolation | `bash scripts/netpol-test.sh [domain]` (part of acceptance) | v1 28/28; tenant-expanded gate 33/33 plus direct cross-tenant denials |
 
 The acceptance script covers: storefront COD checkout, chat creating a product, orders today, invite + API key, cross-server prompt (woo → fx → notes), key revocation (401), disabling a server (`tools/list_changed`, direct call rejected), killing an upstream (others keep working), a slow upstream (20 s timeout, no retry), role-based tool permissions, unauthorized requests, SSRF rejection and the audit trail.
 

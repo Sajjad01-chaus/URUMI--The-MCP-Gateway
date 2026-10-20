@@ -79,10 +79,14 @@ done
 [[ $missing -eq 0 ]] || { echo "some images are missing in the node; aborting before helm" >&2; exit 1; }
 
 step "store chart (store-main)"
+kubectl get namespace store-main >/dev/null 2>&1 || kubectl create namespace store-main
+kubectl label namespace store-main urumi.io/mcp-upstreams=true --overwrite >/dev/null
 helm upgrade --install store-main "$ROOT/deploy/charts/woo-store" -n store-main --create-namespace \
   -f "$ROOT/deploy/values/woo-store/values-local.yaml" -f "$SECRETS" --wait --timeout 15m
 
 step "platform chart (platform)"
+kubectl get namespace platform >/dev/null 2>&1 || kubectl create namespace platform
+kubectl label namespace platform urumi.io/mcp-upstreams=true --overwrite >/dev/null
 helm upgrade --install platform "$ROOT/deploy/charts/platform" -n platform --create-namespace \
   -f "$ROOT/deploy/values/platform/values-local.yaml" -f "$SECRETS" --wait --timeout 10m
 

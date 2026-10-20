@@ -1,11 +1,26 @@
 #!/usr/bin/env bash
 # Proves the NetworkPolicies (design §9.3): throwaway pods with the right and wrong labels try every
 # allowed and denied path; Traefik paths are checked from the host through the Ingress.
-# Usage: scripts/netpol-test.sh [domain]   (default 127-0-0-1.nip.io). Exit code 1 if any row fails.
+# Usage: scripts/netpol-test.sh [domain] [--tenant namespace] [--kubeconfig path]. Exit code 1 if any row fails.
 set -euo pipefail
 export MSYS_NO_PATHCONV=1
 
-DOMAIN="${1:-127-0-0-1.nip.io}"
+DOMAIN=127-0-0-1.nip.io
+TENANT_NS=""
+KUBECONFIG_PATH="${URUMI_KUBECONFIG:-}"
+[[ $# -eq 0 || "$1" == --* ]] || { DOMAIN=$1; shift; }
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --tenant) TENANT_NS="${2:?--tenant needs a namespace}"; shift 2 ;;
+    --kubeconfig) KUBECONFIG_PATH="${2:?--kubeconfig needs a path}"; shift 2 ;;
+    *) echo "unknown argument: $1" >&2; exit 2 ;;
+  esac
+done
+
+KUBE_ARGS=()
+[[ -z "$KUBECONFIG_PATH" ]] || KUBE_ARGS=(--kubeconfig "$KUBECONFIG_PATH")
+kubectl() { command kubectl "${KUBE_ARGS[@]}" "$@"; }
+
 SCHEME=$([[ "${URUMI_ENV:-local}" == prod ]] && echo https || echo http)
 PLATFORM_NS=platform
 STORE_NS=store-main
@@ -17,6 +32,7 @@ fail=0
 cleanup() {
   kubectl -n "$PLATFORM_NS" delete pod -l "$TEST_LABEL" --wait=false >/dev/null 2>&1 || true
   kubectl -n "$STORE_NS" delete pod -l "$TEST_LABEL" --wait=false >/dev/null 2>&1 || true
+  [[ -z "$TENANT_NS" ]] || kubectl -n "$TENANT_NS" delete pod -l "$TEST_LABEL" --wait=false >/dev/null 2>&1 || true
 }
 trap cleanup EXIT
 
@@ -52,6 +68,7 @@ via_ingress() {
 echo "Removing leftovers from earlier runs..."
 kubectl -n "$PLATFORM_NS" delete pod -l "$TEST_LABEL" --wait=true >/dev/null 2>&1 || true
 kubectl -n "$STORE_NS" delete pod -l "$TEST_LABEL" --wait=true >/dev/null 2>&1 || true
+[[ -z "$TENANT_NS" ]] || kubectl -n "$TENANT_NS" delete pod -l "$TEST_LABEL" --wait=true >/dev/null 2>&1 || true
 
 echo "Starting test pods..."
 start_pod "$PLATFORM_NS" np-gateway gateway
@@ -60,8 +77,14 @@ start_pod "$PLATFORM_NS" np-random
 start_pod "$STORE_NS" np-woo woo-mcp
 start_pod "$STORE_NS" np-bootstrap store-bootstrap
 start_pod "$STORE_NS" np-random
+if [[ -n "$TENANT_NS" ]]; then
+  [[ "$TENANT_NS" == store-* ]] || { echo "tenant namespace must start with store-" >&2; exit 1; }
+  start_pod "$TENANT_NS" np-tenant-woo woo-mcp
+  start_pod "$TENANT_NS" np-tenant-random
+fi
 kubectl -n "$PLATFORM_NS" wait --for=condition=Ready pod -l "$TEST_LABEL" --timeout=180s >/dev/null
 kubectl -n "$STORE_NS" wait --for=condition=Ready pod -l "$TEST_LABEL" --timeout=180s >/dev/null
+[[ -z "$TENANT_NS" ]] || kubectl -n "$TENANT_NS" wait --for=condition=Ready pod -l "$TEST_LABEL" --timeout=180s >/dev/null
 # The policy controller needs a moment to program rules for new pods (build-log #5).
 sleep 8
 echo
@@ -74,6 +97,10 @@ probe "$PLATFORM_NS" np-gateway postgres 5432 allowed
 probe "$PLATFORM_NS" np-gateway api.groq.com 443 allowed
 probe "$STORE_NS" np-woo wordpress 80 allowed
 probe "$STORE_NS" np-bootstrap mysql 3306 allowed
+if [[ -n "$TENANT_NS" ]]; then
+  probe "$PLATFORM_NS" np-gateway "woo-mcp.$TENANT_NS" 8000 allowed
+  probe "$TENANT_NS" np-tenant-woo wordpress 80 allowed
+fi
 via_ingress "$SCHEME://store.$DOMAIN/wp-login.php" 200 "Traefik -> wordpress"
 via_ingress "$SCHEME://app.$DOMAIN/healthz" 200 "Traefik -> dashboard"
 via_ingress "$SCHEME://app.$DOMAIN/api/auth/me" 401 "Traefik -> gateway (/api)"
@@ -98,6 +125,11 @@ probe "$PLATFORM_NS" np-gateway "mysql.$STORE_NS" 3306 denied
 probe "$PLATFORM_NS" np-gateway "wordpress.$STORE_NS" 80 denied
 probe "$PLATFORM_NS" np-gateway kubernetes.default 443 denied
 probe "$PLATFORM_NS" np-gateway 169.254.169.254 80 denied
+if [[ -n "$TENANT_NS" ]]; then
+  probe "$PLATFORM_NS" np-random "woo-mcp.$TENANT_NS" 8000 denied
+  probe "$TENANT_NS" np-tenant-random woo-mcp 8000 denied
+  probe "$PLATFORM_NS" np-gateway "wordpress.$TENANT_NS" 80 denied
+fi
 echo
 
 echo "$pass passed, $fail failed"
