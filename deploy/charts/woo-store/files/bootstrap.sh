@@ -52,11 +52,60 @@ if ! wp user get mcp-bot --field=ID >/dev/null 2>&1; then
 fi
 wp eval-file /scripts/register-api-key.php
 
-if [ "$SAMPLE_PRODUCTS" = "true" ] && [ "$(wp post list --post_type=product --post_status=any --format=count)" = "0" ]; then
-  log "seeding sample products"
-  wpa wc product create --name="Urumi T-Shirt" --regular_price="19.99" --status=publish
-  wpa wc product create --name="Kubernetes Mug" --regular_price="12.50" --status=publish
-  wpa wc product create --name="MCP Sticker Pack" --regular_price="4.99" --status=publish
+ensure_catalog_image() {
+  asset_key="$1"
+  filename="$2"
+  title="$3"
+  alt_text="$4"
+  media_id="$(wp post list --post_type=attachment --post_status=inherit --meta_key=urumi_catalog_asset \
+    --meta_value="$asset_key" --field=ID --format=ids | awk '{print $1}')"
+  if [ -z "$media_id" ]; then
+    media_id="$(wp media import "/scripts/$filename" --title="$title" --alt="$alt_text" --porcelain)"
+    wp post meta update "$media_id" urumi_catalog_asset "$asset_key" >/dev/null
+  fi
+  echo "$media_id"
+}
+
+ensure_catalog_product() {
+  name="$1"
+  slug="$2"
+  sku="$3"
+  price="$4"
+  media_id="$5"
+  product_id="$(wpa wc product list --sku="$sku" --format=ids | awk '{print $1}')"
+  if [ -z "$product_id" ]; then
+    product_id="$(wp post list --post_type=product --post_status=any --name="$slug" --field=ID --format=ids | awk '{print $1}')"
+  fi
+  if [ -z "$product_id" ]; then
+    wpa wc product create --name="$name" --slug="$slug" --sku="$sku" --regular_price="$price" --status=publish >/dev/null
+    product_id="$(wpa wc product list --sku="$sku" --format=ids | awk '{print $1}')"
+  else
+    wpa wc product update "$product_id" --name="$name" --slug="$slug" --sku="$sku" \
+      --regular_price="$price" --status=publish >/dev/null
+  fi
+  wp post meta update "$product_id" _thumbnail_id "$media_id" >/dev/null
+}
+
+if [ "$SAMPLE_PRODUCTS" = "true" ]; then
+  log "ensuring the four catalog products and their images"
+  shirt_image="$(ensure_catalog_image urumi-shirt urumi-t-shirt.jpg "Urumi T-Shirt" "Folded charcoal Urumi T-Shirt")"
+  kube_image="$(ensure_catalog_image kubernetes-mug kubernetes-mug.jpg "Kubernetes Mug" "White infrastructure-themed ceramic mug")"
+  stickers_image="$(ensure_catalog_image mcp-stickers mcp-sticker-pack.jpg "MCP Sticker Pack" "Developer tool and gateway sticker pack")"
+  urumi_mug_image="$(ensure_catalog_image urumi-mug urumi-mug.jpg "Urumi Mug" "Violet Urumi gateway mug")"
+  ensure_catalog_product "Urumi T-Shirt" urumi-t-shirt URUMI-TSHIRT 19.99 "$shirt_image"
+  ensure_catalog_product "Kubernetes Mug" kubernetes-mug URUMI-KUBE-MUG 12.50 "$kube_image"
+  ensure_catalog_product "MCP Sticker Pack" mcp-sticker-pack URUMI-STICKERS 4.99 "$stickers_image"
+  ensure_catalog_product "Urumi Mug" urumi-mug URUMI-MUG 12.50 "$urumi_mug_image"
+  canonical_mug_id="$(wpa wc product list --sku=URUMI-MUG --format=ids | awk '{print $1}')"
+  for product_id in $(wp post list --post_type=product --post_status=any --field=ID --format=ids); do
+    [ "$product_id" = "$canonical_mug_id" ] && continue
+    product_title="$(wp post get "$product_id" --field=post_title)"
+    product_sku="$(wp post meta get "$product_id" _sku 2>/dev/null || true)"
+    if [ "$product_title" = "Urumi Mug" ] && [ -z "$product_sku" ]; then
+      log "removing legacy acceptance duplicate product $product_id"
+      wp post delete "$product_id" --force >/dev/null
+    fi
+  done
 fi
 
 log "publishing the storefront homepage"
@@ -64,7 +113,7 @@ homepage_file="$(mktemp)"
 cat > "$homepage_file" <<'HTML'
 <!-- wp:html -->
 <style>
-body.home main{margin-block-start:0!important}body.home main>.wp-block-group{padding-top:0!important;padding-bottom:0!important}body.home .entry-content{margin-block-start:0!important}body.home .wp-block-post-title,body.home footer.wp-block-template-part{display:none}.urumi-hero{border-radius:0 0 28px 28px;box-shadow:0 24px 70px rgba(15,23,42,.18);overflow:hidden}.urumi-kicker{letter-spacing:.16em;text-transform:uppercase}.urumi-feature{border:1px solid #e2e8f0;border-radius:18px;height:100%;box-shadow:0 10px 30px rgba(15,23,42,.06)}.urumi-products{max-width:none!important}.urumi-products ul.products{display:grid!important;grid-template-columns:repeat(3,minmax(0,1fr));gap:24px}.urumi-products ul.products::before,.urumi-products ul.products::after{display:none!important}.urumi-products li.product{border:1px solid #e2e8f0;border-radius:18px;padding:18px!important;margin:0!important;width:auto!important;box-shadow:0 10px 30px rgba(15,23,42,.06)}@media(max-width:760px){.urumi-products ul.products{grid-template-columns:1fr}}
+body.home main{margin-block-start:0!important}body.home main>.wp-block-group{padding-top:0!important;padding-bottom:0!important}body.home .entry-content{margin-block-start:0!important}body.home .wp-block-post-title,body.home footer.wp-block-template-part{display:none}.urumi-hero{border-radius:0 0 28px 28px;box-shadow:0 24px 70px rgba(15,23,42,.18);overflow:hidden}.urumi-kicker{letter-spacing:.16em;text-transform:uppercase}.urumi-feature{border:1px solid #e2e8f0;border-radius:18px;height:100%;box-shadow:0 10px 30px rgba(15,23,42,.06)}.urumi-products{max-width:none!important}.urumi-products ul.products{display:grid!important;grid-template-columns:repeat(4,minmax(0,1fr));gap:24px}.urumi-products ul.products::before,.urumi-products ul.products::after{display:none!important}.urumi-products li.product{border:1px solid #e2e8f0;border-radius:18px;padding:18px!important;margin:0!important;width:auto!important;box-shadow:0 10px 30px rgba(15,23,42,.06)}@media(max-width:1000px){.urumi-products ul.products{grid-template-columns:repeat(2,minmax(0,1fr))}}@media(max-width:650px){.urumi-products ul.products{grid-template-columns:1fr}}
 </style>
 <!-- /wp:html -->
 <!-- wp:group {"align":"full","className":"urumi-hero","style":{"color":{"gradient":"linear-gradient(135deg,rgb(15,23,42) 0%,rgb(49,46,129) 58%,rgb(124,58,237) 100%)"},"spacing":{"padding":{"top":"96px","right":"clamp(28px,7vw,110px)","bottom":"96px","left":"clamp(28px,7vw,110px)"}}},"textColor":"base","layout":{"type":"constrained"}} -->
@@ -112,7 +161,7 @@ body.home main{margin-block-start:0!important}body.home main>.wp-block-group{pad
 <div class="wp-block-group alignwide" style="padding-bottom:80px"><!-- wp:heading {"style":{"typography":{"fontSize":"38px"},"spacing":{"margin":{"bottom":"28px"}}}} -->
 <h2 class="wp-block-heading" style="margin-bottom:28px;font-size:38px">Featured products</h2>
 <!-- /wp:heading -->
-<!-- wp:shortcode -->[products limit="6" columns="3" orderby="date" order="DESC" class="urumi-products"]<!-- /wp:shortcode --></div>
+<!-- wp:shortcode -->[products limit="4" columns="4" orderby="date" order="DESC" class="urumi-products"]<!-- /wp:shortcode --></div>
 <!-- /wp:group -->
 <!-- wp:group {"align":"full","style":{"color":{"background":"#0f172a"},"spacing":{"padding":{"top":"48px","right":"clamp(28px,7vw,110px)","bottom":"48px","left":"clamp(28px,7vw,110px)"}}},"textColor":"base","layout":{"type":"flex","flexWrap":"wrap","justifyContent":"space-between"}} -->
 <div class="wp-block-group alignfull has-base-color has-text-color has-background" style="background-color:#0f172a;padding-top:48px;padding-right:clamp(28px,7vw,110px);padding-bottom:48px;padding-left:clamp(28px,7vw,110px)"><!-- wp:group {"layout":{"type":"constrained"}} -->
@@ -130,6 +179,26 @@ fi
 rm -f "$homepage_file"
 wp option update show_on_front page
 wp option update page_on_front "$homepage_id"
+
+log "publishing the global storefront footer"
+footer_file="$(mktemp)"
+cat > "$footer_file" <<'HTML'
+<!-- wp:group {"align":"full","style":{"color":{"background":"#0f172a"},"spacing":{"padding":{"top":"48px","right":"clamp(28px,7vw,110px)","bottom":"48px","left":"clamp(28px,7vw,110px)"}}},"textColor":"base","layout":{"type":"flex","flexWrap":"wrap","justifyContent":"space-between"}} -->
+<div class="wp-block-group alignfull has-base-color has-text-color has-background" style="background-color:#0f172a;padding-top:48px;padding-right:clamp(28px,7vw,110px);padding-bottom:48px;padding-left:clamp(28px,7vw,110px)"><!-- wp:group {"layout":{"type":"constrained"}} -->
+<div class="wp-block-group"><!-- wp:heading {"level":3,"textColor":"base"} --><h3 class="wp-block-heading has-base-color has-text-color">Urumi Demo Store</h3><!-- /wp:heading --><!-- wp:paragraph {"style":{"color":{"text":"#cbd5e1"}}} --><p class="has-text-color" style="color:#cbd5e1">WooCommerce on Kubernetes · Connected through the Urumi MCP Gateway</p><!-- /wp:paragraph --></div>
+<!-- /wp:group -->
+<!-- wp:navigation {"overlayMenu":"never","textColor":"base","layout":{"type":"flex","justifyContent":"right"}} --><!-- wp:navigation-link {"label":"Shop","url":"/shop/","kind":"custom"} /--><!-- wp:navigation-link {"label":"Cart","url":"/cart/","kind":"custom"} /--><!-- wp:navigation-link {"label":"My account","url":"/my-account/","kind":"custom"} /--><!-- /wp:navigation --></div>
+<!-- /wp:group -->
+HTML
+footer_id="$(wp post list --post_type=wp_template_part --post_status=any --name=footer --field=ID --format=ids | awk '{print $1}')"
+if [ -n "$footer_id" ]; then
+  wp post update "$footer_id" "$footer_file" --post_title="Footer" --post_status=publish
+else
+  footer_id="$(wp post create "$footer_file" --post_type=wp_template_part --post_title="Footer" --post_name=footer --post_status=publish --porcelain)"
+fi
+rm -f "$footer_file"
+wp post term set "$footer_id" wp_theme twentytwentyfive --by=slug >/dev/null
+wp post term set "$footer_id" wp_template_part_area footer --by=slug >/dev/null
 
 for default_slug in hello-world sample-page; do
   default_ids="$(wp post list --post_type=any --name="$default_slug" --post_status=any --format=ids)"

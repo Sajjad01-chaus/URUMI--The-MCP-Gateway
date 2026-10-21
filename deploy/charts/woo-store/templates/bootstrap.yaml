@@ -9,6 +9,8 @@ data:
 {{ .Files.Get "files/bootstrap.sh" | indent 4 }}
   register-api-key.php: |-
 {{ .Files.Get "files/register-api-key.php" | indent 4 }}
+binaryData:
+{{ (.Files.Glob "files/products/*").AsSecrets | indent 2 }}
 ---
 apiVersion: batch/v1
 kind: Job
@@ -28,6 +30,7 @@ spec:
         app.kubernetes.io/name: store-bootstrap
       annotations:
         checksum/script: {{ .Files.Get "files/bootstrap.sh" | sha256sum }}
+        checksum/product-images: {{ (.Files.Glob "files/products/*").AsSecrets | sha256sum }}
     spec:
       restartPolicy: Never
       automountServiceAccountToken: false

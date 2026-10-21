@@ -8,6 +8,9 @@ Usage: uv run --project services/gateway python scripts/acceptance.py [domain]
 """
 
 import asyncio
+import base64
+import hashlib
+import hmac
 import json
 import os
 import re
@@ -15,6 +18,7 @@ import secrets
 import subprocess
 import sys
 import time
+import urllib.parse
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
@@ -35,7 +39,7 @@ SCHEME = "https" if ENV == "prod" else "http"
 APP, MCP_URL, STORE = f"{SCHEME}://app.{DOMAIN}", f"{SCHEME}://mcp.{DOMAIN}/mcp", f"{SCHEME}://store.{DOMAIN}"
 ALICE, BOB = "alice@urumi.test", "bob@urumi.test"
 XRW = {"X-Requested-With": "acceptance"}
-PRODUCT = "Urumi Mug"
+PRODUCT = f"Urumi Acceptance Mug {secrets.token_hex(4)}"
 CHAT_COOLDOWN_SECONDS = int(os.environ.get("ACCEPTANCE_CHAT_COOLDOWN_SECONDS", "5"))
 if not 0 <= CHAT_COOLDOWN_SECONDS <= 300:
     raise ValueError("ACCEPTANCE_CHAT_COOLDOWN_SECONDS must be between 0 and 300")
@@ -72,6 +76,7 @@ class World:
     bob_key_id: str = ""
     first_order: int = 0
     mug_order: int = 0
+    product_id: int = 0
     server_ids: dict[str, str] = field(default_factory=dict)
 
 
@@ -262,6 +267,7 @@ async def step3_chat_create(w: World, r: Report) -> None:
     r.check("chat called woo__create_product", bool(calls), [c["name"] for c in body["tool_calls"]])
     if calls:
         product = json.loads(calls[-1]["result"])
+        w.product_id = product["id"]
         r.check("product created at 12.50 and published", product["regular_price"] == "12.50" and product["status"] == "publish", product["id"])
         async with httpx2.AsyncClient(timeout=30, follow_redirects=True) as http:
             code = (await http.get(product["permalink"])).status_code
@@ -472,6 +478,54 @@ async def cleanup_keys(world: World, report: Report) -> None:
         report.check(label, response.status_code in (204, 404), response.status_code)
 
 
+async def cleanup_store_artifacts(world: World, report: Report) -> None:
+    """Remove only the product and orders created by this acceptance run."""
+    artifacts = [
+        ("orders", world.first_order),
+        ("orders", world.mug_order),
+        ("products", world.product_id),
+    ]
+    artifacts = [(resource, item_id) for resource, item_id in artifacts if item_id]
+    if not artifacts:
+        return
+    try:
+        text = SECRETS.read_text(encoding="utf-8")
+        consumer_key = secret_value(text, "wooConsumerKey")
+        consumer_secret = secret_value(text, "wooConsumerSecret")
+        auth = httpx2.BasicAuth(consumer_key, consumer_secret) if SCHEME == "https" else None
+        async with httpx2.AsyncClient(timeout=60, auth=auth) as http:
+            for resource, item_id in artifacts:
+                url = f"{STORE}/wp-json/wc/v3/{resource}/{item_id}"
+                params = {"force": "true"}
+                if SCHEME == "http":
+                    params.update(
+                        oauth_consumer_key=consumer_key,
+                        oauth_nonce=secrets.token_hex(16),
+                        oauth_signature_method="HMAC-SHA256",
+                        oauth_timestamp=str(int(time.time())),
+                        oauth_version="1.0",
+                    )
+                    def quoted(value: object) -> str:
+                        return urllib.parse.quote(str(value), safe="~")
+
+                    normalized = "&".join(f"{quoted(key)}={quoted(value)}" for key, value in sorted(params.items()))
+                    base = "&".join(("DELETE", quoted(url), quoted(normalized)))
+                    signing_key = f"{quoted(consumer_secret)}&".encode()
+                    params["oauth_signature"] = base64.b64encode(
+                        hmac.new(signing_key, base.encode(), hashlib.sha256).digest()
+                    ).decode()
+                response = await http.delete(
+                    url, params=params
+                )
+                if response.status_code not in (200, 404):
+                    raise AcceptanceError(
+                        f"failed to delete acceptance {resource[:-1]} {item_id}: HTTP {response.status_code}"
+                    )
+        print("  [CLEANUP] removed this run's two orders and product")
+    except (AcceptanceError, OSError, httpx2.HTTPError, ValueError) as exc:
+        report.check("acceptance store artifacts removed", False, f"{type(exc).__name__}: {exc}")
+
+
 async def main() -> int:
     report = Report()
     started = time.monotonic()
@@ -491,6 +545,7 @@ async def main() -> int:
                     report.check("step aborted", False, f"{type(exc).__name__}: {exc}")
         finally:
             await cleanup_keys(world, report)
+            await cleanup_store_artifacts(world, report)
     failed = report.failed()
     print(f"\n{len(report.rows) - len(failed)}/{len(report.rows)} checks passed in {time.monotonic() - started:.0f} s")
     for step, label, _, detail in failed:
