@@ -2,17 +2,21 @@
 
 import asyncio
 import logging
+import os
 import re
 import subprocess
+import sys
 import time
 from pathlib import Path
 
 import httpx2
 
 ROOT = Path(__file__).resolve().parent.parent
-SECRETS = ROOT / "deploy" / "secrets" / "local.secrets.yaml"
-APP = "http://app.127-0-0-1.nip.io"
-DOMAIN = "127-0-0-1.nip.io"
+ENV = os.environ.get("URUMI_ENV", "local")
+SECRETS = ROOT / "deploy" / "secrets" / f"{ENV}.secrets.yaml"
+DOMAIN = sys.argv[1] if len(sys.argv) > 1 else "127-0-0-1.nip.io"
+SCHEME = "https" if ENV == "prod" else "http"
+APP = f"{SCHEME}://app.{DOMAIN}"
 SLUG = "recovery"
 NAMESPACE = f"store-{SLUG}"
 XRW = {"X-Requested-With": "phase-10.1-gate"}
@@ -109,7 +113,7 @@ async def run() -> None:
                 "get", "pod", "-n", "platform", "-l", "app.kubernetes.io/name=provisioner", "-o", "jsonpath={.items[0].metadata.uid}"
             ).stdout
             check("new provisioner recovered lease", bool(after) and after != before)
-        check("store URL is stable", store["url"] == f"http://store-{SLUG}.{DOMAIN}")
+        check("store URL is stable", store["url"] == f"{SCHEME}://store-{SLUG}.{DOMAIN}")
         managed_by = kubectl(
             "get", "namespace", NAMESPACE, "-o", "jsonpath={.metadata.labels.urumi\\.io/managed-by}"
         ).stdout
