@@ -1,6 +1,6 @@
 # Urumi MCP Gateway — v2 System Design
 
-> Status: **approved; Phases 10.0–10.8 complete locally; Phase 11 release is next** (updated 2026-10-21). The exact final Phase 10.8 images passed 59/59 acceptance and 37/37 isolation; v2 builds on top of the implemented and deployed v1.
+> Status: **approved; Phases 10.0–10.8 complete locally; Phase 11 release in progress** (updated 2026-10-21). Exact final images passed 59/59 acceptance and 37/37 isolation; immutable six-image release `220a643b…` passed CI and is published to GHCR. Azure remains on v1 pending backup/preflight/deploy.
 > [v1-system-design.md](v1-system-design.md) stays **frozen** as the original plan. This document only describes **what changes**; anything not mentioned here works exactly as v1 says.
 > Deadline: **2026-10-22**. Feature freeze: **2026-10-21 12:00 IST** (§16).
 

@@ -66,6 +66,40 @@ async def tool_names(client: Client) -> set[str]:
     return {tool.name for tool in (await client.list_tools()).tools}
 
 
+async def store_checkout(slug: str) -> int:
+    base = f"http://store-{slug}.{DOMAIN}/wp-json/wc/store/v1"
+    async with httpx2.AsyncClient(timeout=60) as http:
+        products = (await http.get(f"{base}/products", params={"search": "Kubernetes Mug"})).json()
+        product = next((item for item in products if item["name"] == "Kubernetes Mug"), None)
+        if product is None:
+            raise GateError(f"Kubernetes Mug missing from {slug}")
+        cart = await http.get(f"{base}/cart")
+        headers = {"Cart-Token": cart.headers["Cart-Token"], "Nonce": cart.headers["Nonce"]}
+        added = await http.post(
+            f"{base}/cart/add-item", json={"id": product["id"], "quantity": 1}, headers=headers
+        )
+        added.raise_for_status()
+        address = {
+            "first_name": "Bonus",
+            "last_name": slug.title(),
+            "address_1": "1 Demo Street",
+            "city": "Pune",
+            "state": "MH",
+            "postcode": "411001",
+            "country": "IN",
+            "email": f"bonus-{slug}@urumi.test",
+            "phone": "9000000000",
+        }
+        checkout = await http.post(
+            f"{base}/checkout",
+            json={"billing_address": address, "shipping_address": address, "payment_method": "cod"},
+            headers=headers,
+        )
+        if checkout.status_code != 200:
+            raise GateError(f"{slug} checkout failed: HTTP {checkout.status_code} {checkout.text[:200]}")
+        return int(checkout.json()["order_id"])
+
+
 async def wait_store(http: httpx2.AsyncClient, store_id: str, expected: str, seconds: int) -> dict:
     deadline = time.monotonic() + seconds
     last = "missing"
@@ -225,6 +259,13 @@ async def run() -> None:
                         check(f"{slug} routed tool succeeds", not info.is_error)
                 check("v1 tool catalog remains visible", {"woo__get_store_info", "notes__search", "fx__convert_currency"} <= names)
 
+                north_order, south_order = await asyncio.gather(store_checkout("north"), store_checkout("south"))
+                check("one COD order created in each store", north_order > 0 and south_order > 0, f"north={north_order}, south={south_order}")
+                for slug, order_id in (("north", north_order), ("south", south_order)):
+                    orders = await client.call_tool(f"{slug}__list_orders", {"period": "today"})
+                    order_ids = [item["id"] for item in (orders.structured_content or {}).get("orders", [])]
+                    check(f"{slug} today's orders contain its COD order", not orders.is_error and order_id in order_ids, str(order_ids))
+
                 netpol = await asyncio.to_thread(
                     command,
                     [
@@ -236,8 +277,8 @@ async def run() -> None:
                 )
                 print(netpol.stdout, end="")
                 check(
-                    "v1 plus tenant NetworkPolicy matrix",
-                    "33 passed, 0 failed" in netpol.stdout and netpol.returncode == 0,
+                    "full hardened plus tenant NetworkPolicy matrix",
+                    "42 passed, 0 failed" in netpol.stdout and netpol.returncode == 0,
                 )
                 verify_cross_tenant_isolation()
 
@@ -245,19 +286,37 @@ async def run() -> None:
                     "/api/chat",
                     json={"messages": [{
                         "role": "user",
-                        "content": "Call north__get_store_info and south__get_store_info, then compare their store URLs in one sentence.",
+                        "content": (
+                            "Compare today's orders across the north and south stores. Use tool search to call each "
+                            "store's list-orders tool with period today, and mention both order IDs in the answer."
+                        ),
                     }]},
                     headers=XRW,
                     timeout=180,
                 )
                 check("cross-store chat answered", chat.status_code == 200, f"HTTP {chat.status_code}")
                 body = chat.json()
-                calls = {item["name"] for item in body["tool_calls"] if not item["is_error"]}
-                check("chat called both stores", {"north__get_store_info", "south__get_store_info"} <= calls, str(sorted(calls)))
-                for slug, _ in STORES:
+                check(
+                    "chat answer mentions both stores' orders",
+                    all(
+                        value in body["answer"].lower()
+                        for value in ("north", "south", str(north_order), str(south_order))
+                    ),
+                    body["answer"][:200],
+                )
+                for slug, order_id in (("north", north_order), ("south", south_order)):
                     audit = await http.get("/api/audit", params={"server": slug, "outcome": "success", "limit": 20})
                     rows = audit.json()["items"]
-                    check(f"{slug} audit rows recorded", any(row["server_slug"] == slug for row in rows))
+                    check(
+                        f"chat called {slug}__list_orders",
+                        any(
+                            row["server_slug"] == slug
+                            and row["exposed_name"] == f"{slug}__list_orders"
+                            and row["source"] == "chat"
+                            for row in rows
+                        ),
+                        f"order={order_id}",
+                    )
 
                 await delete_and_verify(http, client, ready[0], expect_notification=True)
                 names = await tool_names(client)
