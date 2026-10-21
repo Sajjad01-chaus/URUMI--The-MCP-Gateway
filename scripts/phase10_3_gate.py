@@ -2,9 +2,11 @@
 
 import asyncio
 import json
+import os
 import re
 import secrets
 import subprocess
+import sys
 import time
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -14,9 +16,14 @@ from mcp import Client
 from mcp.client.streamable_http import streamable_http_client
 
 ROOT = Path(__file__).resolve().parent.parent
-SECRETS = ROOT / "deploy" / "secrets" / "local.secrets.yaml"
-APP = "http://app.127-0-0-1.nip.io"
-MCP_URL = "http://mcp.127-0-0-1.nip.io/mcp"
+ENV = os.environ.get("URUMI_ENV", "local")
+SECRETS = ROOT / "deploy" / "secrets" / f"{ENV}.secrets.yaml"
+DOMAIN = sys.argv[1] if len(sys.argv) > 1 else "127-0-0-1.nip.io"
+SCHEME = "https" if ENV == "prod" else "http"
+APP = f"{SCHEME}://app.{DOMAIN}"
+MCP_URL = f"{SCHEME}://mcp.{DOMAIN}/mcp"
+HOSTED_FX_IMAGE = os.environ.get("HOSTED_FX_IMAGE", "urumi/fx-mcp:dev")
+SKIP_ROOT_FIXTURE = os.environ.get("GATE_SKIP_ROOT_FIXTURE") == "1"
 XRW = {"X-Requested-With": "phase-10.3-gate"}
 SLUGS = {"fx2", "root-fixture"}
 
@@ -171,7 +178,7 @@ async def run() -> None:
                 payload = {
                     "name": "Hosted FX",
                     "slug": "fx2",
-                    "image": "urumi/fx-mcp:dev",
+                    "image": HOSTED_FX_IMAGE,
                     "port": 8000,
                     "path": "/mcp",
                     "env": {"ALLOWED_HOSTS": "mcp.mcp-fx2.svc.cluster.local:*"},
@@ -202,24 +209,26 @@ async def run() -> None:
                 verify_hardening()
                 verify_isolation()
 
-                root_payload = {
-                    "name": "Root Fixture",
-                    "slug": "root-fixture",
-                    "image": "docker.io/library/busybox:1.37",
-                    "port": 8000,
-                    "path": "/mcp",
-                    "env": {},
-                    "secret_env": {},
-                    "auth_type": "none",
-                    "internet_egress": False,
-                    "size": "small",
-                }
-                response = await http.post("/api/hosted-servers", json=root_payload, headers=XRW)
-                check("root fixture create accepted", response.status_code == 201, f"HTTP {response.status_code}")
-                root = response.json()
-                created.append(root)
-                root = await wait_release(http, root["id"], "failed", 150)
-                check("root image rejected clearly", "must run as non-root" in root["reason"], root["reason"])
+                root = None
+                if not SKIP_ROOT_FIXTURE:
+                    root_payload = {
+                        "name": "Root Fixture",
+                        "slug": "root-fixture",
+                        "image": "docker.io/library/busybox:1.37",
+                        "port": 8000,
+                        "path": "/mcp",
+                        "env": {},
+                        "secret_env": {},
+                        "auth_type": "none",
+                        "internet_egress": False,
+                        "size": "small",
+                    }
+                    response = await http.post("/api/hosted-servers", json=root_payload, headers=XRW)
+                    check("root fixture create accepted", response.status_code == 201, f"HTTP {response.status_code}")
+                    root = response.json()
+                    created.append(root)
+                    root = await wait_release(http, root["id"], "failed", 150)
+                    check("root image rejected clearly", "must run as non-root" in root["reason"], root["reason"])
 
                 await delete_release(http, fx2)
                 check("hosted tools removed immediately", not any(name.startswith("fx2__") for name in await names(client)))
@@ -228,8 +237,12 @@ async def run() -> None:
                     "hosted Helm release removed",
                     command(["helm", "status", "mcp-fx2", "-n", "mcp-fx2"], check_result=False).returncode != 0,
                 )
-                await delete_release(http, root)
-                check("root fixture namespace removed", kubectl("get", "namespace", "mcp-root-fixture", check_result=False).returncode != 0)
+                if root is not None:
+                    await delete_release(http, root)
+                    check(
+                        "root fixture namespace removed",
+                        kubectl("get", "namespace", "mcp-root-fixture", check_result=False).returncode != 0,
+                    )
                 check("tool catalog returned to baseline", await names(client) == baseline)
         finally:
             for row in created:
