@@ -1,6 +1,6 @@
 # Urumi MCP Gateway — v2 System Design
 
-> Status: **approved; Phases 10.0–10.8 complete locally; Phase 11 release in progress** (updated 2026-10-21). Exact final images passed 59/59 acceptance and 37/37 isolation; immutable six-image release `220a643b…` passed CI and is published to GHCR. Azure remains on v1 pending backup/preflight/deploy.
+> Status: **complete locally and deployed to Azure; Phase 11 release complete** (updated 2026-10-21). Immutable six-image release `220a643b…` passed CI, local gates and Azure production gates: 59/59 acceptance, 37/37 isolation, provisioner crash recovery, dynamic store lifecycle and hosted-MCP lifecycle/hardening. Production runs Helm revision 4 with verified backups and a complete `v1.0` restore bundle.
 > [v1-system-design.md](v1-system-design.md) stays **frozen** as the original plan. This document only describes **what changes**; anything not mentioned here works exactly as v1 says.
 > Deadline: **2026-10-22**. Feature freeze: **2026-10-21 12:00 IST** (§16).
 

@@ -22,7 +22,7 @@ The definition of done (design §15), as a recording plan for the demo video. Ta
 | 11 | SSH: `kubectl -n platform scale deploy notes-mcp --replicas=0` → Servers shows notes **Unreachable** with the reason; woo still works → scale back to 1 → Connected | One dead upstream doesn't affect the others. |
 | 12 | SSH: `kubectl -n platform set env deploy/notes-mcp FAULT_DELAY_MS=30000` → a notes call fails with a clear timeout after 20 s while woo stays fast → `kubectl -n platform set env deploy/notes-mcp FAULT_DELAY_MS-` | Timeouts and bulkheads; no retries because tools aren't idempotent. |
 | 13 | Bob: `woo__update_order_status` is not listed; calling it by name → denied | Tool permissions apply at list and call time. |
-| 14 | SSH: `URUMI_ENV=prod bash scripts/netpol-test.sh urumi-sajjad.duckdns.org` → 28 passed | NetworkPolicies are tested, not just declared. |
+| 14 | SSH: `URUMI_ENV=prod bash scripts/netpol-test.sh urumi-sajjad.duckdns.org` → 37 passed | NetworkPolicies are tested, not just declared. |
 | 15 | **Audit log**: every call above with user, server, tool, duration, outcome, source | Every call is attributed to a person. |
 
 **Before recording:** VM started, `kubectl get pods -A` all Running, servers Connected, a fresh browser profile without saved logins, notifications off.
