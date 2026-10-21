@@ -16,6 +16,7 @@ gateway:
 stores:
   maxTotal: 2
 
-# Enabled only in Phase 11 after the Azure API-server /32 is measured and the local gate passes.
 provisioner:
-  enabled: false
+  enabled: true
+  apiServerCidrs:
+    - 172.16.0.4/32
