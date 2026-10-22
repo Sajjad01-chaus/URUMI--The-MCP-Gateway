@@ -10,6 +10,8 @@ A **team MCP gateway** on Kubernetes, with a WooCommerce store as its first data
 
 **Live:** https://app.urumi-sajjad.duckdns.org (dashboard) · https://store.urumi-sajjad.duckdns.org (store) · `https://mcp.urumi-sajjad.duckdns.org/mcp` (MCP endpoint, API key required)
 
+**Release status (v2):** v1 and v2 engineering/release gates are complete and the same Helm-based system is deployed on Azure k3s. The production release passed the 59/59 acceptance suite and the 37/37 network-isolation suite. OAuth on the gateway and multiple gateway replicas remain explicitly out of scope; see [v2 design](docs/design/v2-system-design.md#20-still-out-of-scope-and-why).
+
 ---
 
 ## Architecture
@@ -58,7 +60,7 @@ flowchart LR
 
 Tools are always exposed as `<server-slug>__<tool>` (e.g. `woo__list_orders`, `notes__search` vs `fx__search`), so names never collide and the model sees which system a tool acts on.
 
-Details: [system design and trade-offs](docs/system-design-and-tradeoffs.md) · [threat model](docs/threat-model.md) · [full v1 design](docs/design/v1-system-design.md)
+Details: [system design and trade-offs](docs/system-design-and-tradeoffs.md) · [threat model](docs/threat-model.md) · [full v1 design](docs/design/v1-system-design.md) · [v2 design and build gates](docs/design/v2-system-design.md)
 
 ---
 
@@ -68,7 +70,7 @@ Details: [system design and trade-offs](docs/system-design-and-tradeoffs.md) · 
 
 ```bash
 python scripts/gen_secrets.py local          # random passwords/keys -> deploy/secrets/local.secrets.yaml (gitignored)
-# put your Groq key into groqApiKey in that file
+# place the Groq key in `groqApiKey` in that file
 bash scripts/up.sh                           # k3d cluster, image builds, both Helm releases (~7 min with cached images)
 ```
 
@@ -87,24 +89,24 @@ Then open:
 1. Open the storefront (http://store.127-0-0-1.nip.io, or https://store.urumi-sajjad.duckdns.org in production).
 2. **Shop** → pick a product → **Add to cart** → **View cart** → **Proceed to checkout**.
 3. Fill in any test billing details, choose **Cash on delivery** (the only enabled payment method), **Place order**.
-4. Check it in WooCommerce admin: `/wp-admin` on the store host, user `wpAdminUser` / password `wpAdminPassword` from the secrets file → **WooCommerce → Orders**. The order is `Processing`.
+4. Verify it in WooCommerce admin: `/wp-admin` on the store host, using `wpAdminUser` / `wpAdminPassword` from the secrets file → **WooCommerce → Orders**. The order is `Processing`.
 
 ### Use the chat agent
 
-1. Log in to the dashboard and open **Chat**.
-2. Ask, for example:
+1. Sign in to the dashboard and open **Chat**.
+2. Send, for example:
    - *"Create a product called Urumi Mug for 12.50"* (admins only by default: `create_product` is a write tool)
    - *"What orders came in today?"*
    - *"Summarise today's orders with the total in EUR and save it as a note"* (woo → fx → notes)
-3. Tool chips appear as calls finish and the final answer streams into the page. Conversations survive refreshes and gateway restarts; use the history rail to resume, rename or delete them.
-4. Open **Audit log**: every tool call is there under your user with source `chat`.
+3. Tool chips appear as calls finish and the final answer streams into the page. Conversations survive refreshes and gateway restarts; the history rail resumes, renames or deletes them.
+4. Open **Audit log**: every tool call appears under the logged-in user with source `chat`.
 
-The agent calls the gateway's own `/mcp` endpoint with a 5-minute token for the logged-in user, so it sees exactly the tools your role allows, no more.
+The agent calls the gateway's own `/mcp` endpoint with a 5-minute token for the logged-in user, so it sees exactly the tools allowed by that role.
 
 ### Connect an MCP client
 
 1. Dashboard → **API keys** → **Create key**. The key is shown once (stored only as a SHA-256 hash).
-2. Add the gateway to your client with that key, for example Claude Code:
+2. Add the gateway to the MCP client with that key, for example Claude Code:
 
 ```bash
 claude mcp add -s user --transport http urumi http://mcp.127-0-0-1.nip.io/mcp --header "Authorization: Bearer mcpgw_..."
@@ -128,19 +130,23 @@ Step-by-step guide, including the Azure for Students pitfalls: [docs/vps-setup.m
 
 ---
 
-## What we built beyond the core
+## What we built beyond the core (v2)
 
 | Item (from the brief) | Status | Where |
 |---|---|---|
-| Stand-out 1: production VPS deployment + TLS | Done: k3s on Azure, Let's Encrypt via cert-manager, same charts, values-only changes | [docs/vps-setup.md](docs/vps-setup.md), `deploy/values/*/values-prod.yaml`, `scripts/deploy-prod.sh` |
+| Stand-out 1: production VPS deployment + TLS | Done and deployed: k3s on Azure, Let's Encrypt via cert-manager, same charts, values-only changes | [docs/vps-setup.md](docs/vps-setup.md), `deploy/values/*/values-prod.yaml`, `scripts/deploy-prod.sh` |
 | Stand-out 2: tool permissions | Done: minimum role per tool (defaults from MCP annotations, admin overrides); hidden from `tools/list` **and** rejected on `tools/call` | `services/gateway/src/gateway/catalog.py`, dashboard **Tool permissions** page |
-| Stand-out 6: security hardening | Done locally: SSRF checks, encrypted write-only credentials with documented online key rotation, namespace-wide default-deny ingress and egress, least-privilege allows, no workload service-account tokens except the provisioner, non-root read-only containers and upstream response-size caps | `services/gateway/src/gateway/ssrf.py`, `security.py`, `deploy/charts/*/templates/networkpolicies.yaml`, [threat model](docs/threat-model.md), [upgrade runbook](docs/upgrades.md) |
-| Stand-out 4: handling many tools | Done locally: `/mcp` remains compatible; `/mcp/search` exposes only permission-filtered BM25 search and delegated call meta-tools; chat switches automatically above the configured tool threshold | `services/gateway/src/gateway/catalog.py`, `mcp_gateway.py`, `scripts/phase10_6_gate.py` |
-| Stand-out 7 (partial): abuse controls | Done locally for one gateway replica: shared per-user tool-call token buckets, per-key HTTP limits, audit outcomes and bounded Prometheus counters; scale-out/shared session storage remains explicitly out of scope | `services/gateway/src/gateway/rate_limit.py`, `scripts/phase10_7_gate.py`, [v2 design](docs/design/v2-system-design.md) |
-| Stand-out 8: observability | Done locally: internal Prometheus metrics for calls, latency, health, sessions and provisioning; fixed failure classes; admin Stats page backed by the audit log | dashboard **Stats** page, `services/gateway/src/gateway/metrics.py`, `scripts/phase10_4_gate.py` |
-| Stand-out 9: upgrades and rollback | Done locally: immutable image tags and visible service versions; zero-failure rolling upgrade; bad-image automatic rollback; manual rollback and desired-revision restore | [docs/upgrades.md](docs/upgrades.md), `scripts/phase10_5_gate.py` |
-| Bonus: multi-store provisioning | Done locally: concurrent isolated stores, automatic MCP registration, Stores dashboard, quotas/recovery, unregister-before-teardown and tenant NetworkPolicy tests | `services/provisioner`, dashboard **Stores** page, `scripts/phase10_2_gate.py`, [v2 design](docs/design/v2-system-design.md) |
-| Stand-out 5: hosted MCP servers | Done locally: admin image deployment, allow-listed pinned images, encrypted write-only secrets, automatic registration, hardened isolated namespaces, failure diagnosis and clean teardown | `deploy/charts/hosted-mcp`, dashboard **Servers** page, `scripts/phase10_3_gate.py`, [v2 design](docs/design/v2-system-design.md) |
+| Stand-out 6: security hardening | Done and verified locally + Azure: SSRF checks, encrypted write-only credentials with key rotation, namespace-wide default-deny ingress/egress, least-privilege allows, non-root read-only containers and response-size caps | `services/gateway/src/gateway/ssrf.py`, `security.py`, `deploy/charts/*/templates/networkpolicies.yaml`, [threat model](docs/threat-model.md) |
+| Stand-out 4: handling many tools | Done and verified locally + Azure: compatible `/mcp`, permission-filtered BM25 search, delegated call meta-tools and automatic chat search mode | `services/gateway/src/gateway/catalog.py`, `mcp_gateway.py`, `scripts/phase10_6_gate.py` |
+| Stand-out 7 (partial): abuse controls | Done for one gateway replica: per-user tool-call token buckets, per-key HTTP limits and audited outcomes; multi-replica shared state is explicitly out of scope | `services/gateway/src/gateway/rate_limit.py`, `scripts/phase10_7_gate.py`, [v2 design](docs/design/v2-system-design.md) |
+| Stand-out 8: observability | Done and verified locally + Azure: Prometheus metrics, classified failures and admin Stats page backed by the audit log | dashboard **Stats** page, `services/gateway/src/gateway/metrics.py`, `scripts/phase10_4_gate.py` |
+| Stand-out 9: upgrades and rollback | Done and verified: immutable image tags, visible versions, rolling upgrade, automatic bad-image rollback and manual restore | [docs/upgrades.md](docs/upgrades.md), `scripts/phase10_5_gate.py` |
+| Bonus: multi-store provisioning | Done and verified locally + Azure: concurrent isolated stores, automatic MCP registration, Stores dashboard, quotas/recovery, clean teardown and tenant NetworkPolicy tests | `services/provisioner`, dashboard **Stores** page, `scripts/phase10_2_gate.py`, [v2 design](docs/design/v2-system-design.md) |
+| Stand-out 5: hosted MCP servers | Done and verified locally + Azure: allow-listed pinned images, encrypted write-only secrets, automatic registration, isolated namespaces, failure diagnosis and clean teardown | `deploy/charts/hosted-mcp`, dashboard **Servers** page, `scripts/phase10_3_gate.py`, [v2 design](docs/design/v2-system-design.md) |
+
+### Deliberate v2 boundaries
+
+OAuth authorization-server flows and multiple gateway replicas are designed and documented as future work, not claimed as implemented. The current deployment uses authenticated sessions and API keys, with one gateway replica so in-memory MCP sessions, catalog state and rate-limit buckets remain correct and demonstrable. See [v2 design §20](docs/design/v2-system-design.md#20-still-out-of-scope-and-why).
 
 ---
 
@@ -150,7 +156,7 @@ Step-by-step guide, including the Azure for Students pitfalls: [docs/vps-setup.m
 |---|---|---|
 | Unit + integration | `uv run pytest` in each Python service | gateway 76, woo-mcp 13, notes-mcp 3, fx-mcp 3 |
 | Acceptance (demo script, design §15) | `bash scripts/acceptance.sh [domain] [--prod]` | 59/59 locally from an empty cluster and on production |
-| Network isolation | `bash scripts/netpol-test.sh [domain]` (part of acceptance) | full local default-deny matrix 37/37; tenant-expanded gate 33/33 plus direct cross-tenant denials |
+| Network isolation | `bash scripts/netpol-test.sh [domain]` (part of acceptance) | full local and production matrix 37/37; tenant-expanded checks and direct cross-tenant denials |
 
 The acceptance script covers: storefront COD checkout, chat creating a product, orders today, invite + API key, cross-server prompt (woo → fx → notes), key revocation (401), disabling a server (`tools/list_changed`, direct call rejected), killing an upstream (others keep working), a slow upstream (20 s timeout, no retry), role-based tool permissions, unauthorized requests, SSRF rejection and the audit trail.
 
